@@ -10,6 +10,8 @@ C-CUBE is a rich and powerful programming language created for game development 
 * Standard Package manager: Yes
 * Automatically supported APIs: Vulkan, OpenGL and OpenGL-ES
 * Underlying programming language: Phyton
+* Target source file: 130 MB
+* Main programming language: C++
 
 # Target Hello World code
 ```
