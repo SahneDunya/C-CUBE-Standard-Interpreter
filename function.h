@@ -1,75 +1,42 @@
 #ifndef C_CUBE_FUNCTION_H
 #define C_CUBE_FUNCTION_H
 
-#include "callable.h" // Callable arayüzünü kullanıyoruz
-#include "ast.h"      // FunDeclStmt ve BlockStmt gibi AST düğümleri için
-#include "token.h"    // Parametre isimleri için Token
-#include "environment.h" // Fonksiyonun closure ortamı için
-
 #include <vector>
 #include <string>
 #include <memory> // std::shared_ptr için
 
-// İleri bildirimler (Interpreter ve Value zaten callable.h tarafından ele alınıyor)
- class Interpreter; // callable.h'de ileri bildirildi
- class Value;       // value.h'de tanımlı
- using ValuePtr = std::shared_ptr<Value>; // value.h'de tanımlı
+#include "object.h"      // Temel Object sınıfı
+#include "callable.h"    // Callable arayüzü
+#include "environment.h" // Fonksiyonun closure ortamı için
+#include "ast.h"         // FunStmt için
+#include "value.h"       // Argüman ve dönüş değerleri için Value
 
-// Kullanıcı tanımlı C-CUBE fonksiyonunu temsil eden sınıf
-class C_CUBE_Function : public Callable, public std::enable_shared_from_this<C_CUBE_Function> {
-    // std::enable_shared_from_this, fonksiyon nesnesinin içinde kendisine
-    // shared_ptr oluşturabilmek için kullanılır (closure yaparken faydalı olabilir)
+// İleri bildirimler
+class Interpreter;
+
+class CCubeFunction : public Object, public Callable {
 private:
-    // Fonksiyonu tanımlayan AST düğümü (FunDeclStmt değil, sadece ilgili kısımlar)
-    // Parametre listesi ve gövde AST'si
-    const std::vector<Token> parameters;
-    const StmtPtr body; // Genellikle bir BlockStmtPtr olur
-
-    // Fonksiyonun tanımlandığı ortam (closure için gereklidir)
-    const EnvironmentPtr closure;
-
-    // Metotlar için (bir sınıfa bağlı fonksiyonlar) "this" binding'i
-    // Bu, fonksiyonun bir metot çağrısı olduğunda hangi instance'a bağlı olduğunu tutar.
-    // Bind metodu ile oluşturulur.
-     const std::shared_ptr<C_CUBE_Object> instance; // Object sınıfı tanımlandığında kullanılacak
-
-    // Fonksiyonun bir initializer metot mu olduğunu belirten flag (sınıf kurucusu gibi)
-    // const bool isInitializer;
-
+    std::shared_ptr<FunStmt> declaration;
+    std::shared_ptr<Environment> closure; // Fonksiyonun tanımlandığı ortam (closure)
+    bool isInitializer; // Eğer bu bir sınıfın 'init' metoduysa
 
 public:
-    // Constructor
-    // decl: Fonksiyon tanımının AST düğümü
-    // closure: Fonksiyonun tanımlandığı Environment (closure ortamı)
-    // isInitializer: Bu bir initializer (yapıcı) metot mu?
-    C_CUBE_Function(const std::vector<Token>& parameters, StmtPtr body, EnvironmentPtr closure/*, bool isInitializer = false*/)
-        : parameters(parameters), body(std::move(body)), closure(closure)/*, isInitializer(isInitializer)*/ {}
+    CCubeFunction(std::shared_ptr<FunStmt> declaration, std::shared_ptr<Environment> closure, bool isInitializer);
 
+    // Callable arayüzünden
+    virtual Value call(Interpreter& interpreter, const std::vector<Value>& arguments) override;
+    virtual size_t arity() const override;
 
-    // Callable arayüz metodlarının implementasyonu
+    // Object arayüzünden
+    virtual ObjectType getType() const override { return ObjectType::FUNCTION; }
+    virtual std::string toString() const override;
+    virtual size_t getSize() const override; // GC için boyut hesaplama
 
-    // Fonksiyonun beklediği argüman sayısını döndürür (parametre sayısı)
-    int arity() const override {
-        return parameters.size();
-    }
+    // CCubeFunction'ı belirli bir instance'a bağlar (metotlar için)
+    std::shared_ptr<CCubeFunction> bind(std::shared_ptr<CCubeInstance> instance);
 
-    // Fonksiyonu çağırır
-    ValuePtr call(Interpreter& interpreter, const std::vector<ValuePtr>& arguments) override;
-
-    // Fonksiyonun string temsilini döndürür
-    std::string toString() const override {
-        // Fonksiyon adını saklamıyoruz (AST düğümünden geliyor), bu yüzden jenerik bir isim kullanıyoruz
-        return "<fn>"; // Veya eğer adı saklıyorsanız "<fn " + name + ">"
-    }
-
-    // Metot binding'i için (bir method çağrıldığında 'this' referansını bağlar)
-     C_CUBE_FunctionPtr bind(std::shared_ptr<C_CUBE_Object> instance); // Object sınıfı tanımlandığında kullanılacak
-
-    // Bu bir initializer metot mu kontrolü
-     bool isInitializerMethod() const { return isInitializer; }
+    // GC'nin closure ortamına erişebilmesi için
+    std::shared_ptr<Environment> getClosure() const { return closure; }
 };
-
-// C_CUBE_Function nesnesine akıllı işaretçi alias'ı
-using C_CUBE_FunctionPtr = std::shared_ptr<C_CUBE_Function>;
 
 #endif // C_CUBE_FUNCTION_H
