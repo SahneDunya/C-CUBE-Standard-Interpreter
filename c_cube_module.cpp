@@ -43,7 +43,7 @@ ValuePtr C_CUBE_Module::get(const Token& name) {
 }
 
 std::string C_CUBE_Module::toString() const {
-    // std::visit kullanarak farklı content türlerine göre string döndür
+    // std::visit kullanarak 'content' variant'ının içerdiği türe göre farklı string döndür.
     return std::visit([this](auto&& arg) -> std::string {
         using T = std::decay_t<decltype(arg)>;
         if constexpr (std::is_same_v<T, std::monostate>) {
@@ -54,28 +54,73 @@ std::string C_CUBE_Module::toString() const {
             return arg.toString(); // PythonModuleHandle'ın kendi toString'ini çağır
         } else if constexpr (std::is_same_v<T, NativeModuleHandle>) {
             return arg.toString(); // NativeModuleHandle'ın kendi toString'ini çağır
+        } else if constexpr (std::is_same_v<T, FortranModuleHandle>) {
+            return arg.toString(); // FortranModuleHandle'ın kendi toString'ini çağır
+        } else if constexpr (std::is_same_v<T, JuliaModuleHandle>) {
+            return arg.toString(); // JuliaModuleHandle'ın kendi toString'ini çağır
         }
         return "<Unknown Module Type for " + name + ">";
     }, content);
 }
 
-void C_CUBE_Module::markChildren() {
-    // Modülün içerdiği GcObject'leri işaretle
-    std::visit([this](auto&& arg) {
+// C_CUBE_Module::markChildren() implementasyonu
+// Bu metot, C_CUBE_Module nesnesinin referans verdiği diğer GcObject'leri işaretler.
+void C_CUBE_Module::markChildren(GarbageCollector& gc) {
+    // Modülün içerdiği 'content' variant'ını kontrol et.
+    std::visit([&gc](auto&& arg) {
         using T = std::decay_t<decltype(arg)>;
         if constexpr (std::is_same_v<T, std::pair<std::vector<StmtPtr>, EnvironmentPtr>>) {
-            // C-CUBE modülü: Ortamını ve AST'sini işaretle
-            // Ortamın kendisi GcObject ise (environment.h'da GcObject'ten türemişse)
-            if (arg.second) {
-                arg.second->markChildren(); // Ortam içindeki GcObject'leri işaretle
+            // Eğer bir C-CUBE (.cube) modülü ise:
+            // 1. Modülün ortamını işaretle (Environment'ın kendisi GcObject olduğu varsayılır)
+            EnvironmentPtr moduleEnv = arg.second;
+            if (moduleEnv) {
+                gc.enqueueForMarking(moduleEnv);
             }
-            // AST'deki GcObject'leri işaretle (eğer AST düğümleri GcObject'ler tutuyorsa)
-            // Bunu Interpreter'ın kendisi yürütürken yapabilir
-            // Veya her StmtPtr içinde GcObject'lere referans tutan bir yapı varsa, o da işaretlenmeli
+
+            // 2. Modülün AST'sindeki Statement'ları ve onların içindeki Expression'ları tara.
+            //    Bu StmtPtr'lar ve ExprPtr'lar genellikle doğrudan GcObject değildir, ancak
+            //    içerdikleri ValuePtr'lar veya GcObject'lere işaret eden yapılar olabilir.
+            //    Eğer AST düğümleri GcObject'lere doğrudan referans tutuyorsa,
+            //    her bir düğümün kendi markChildren() metodunu çağırmak veya
+            //    burada manuel olarak tarama yapmak gerekebilir.
+            //    Basit bir C-CUBE için AST düğümleri genellikle kendileri GcObject değildir,
+            //    ancak içerdikleri değişkenler (örneğin StringLiteral'lar, ObjectLiteral'lar)
+            //    ValuePtr üzerinden GcObject olabilir.
+            //    Bu genelde Interpreter'ın yürütme sırasında ValuePtr'ları üretirken GC'ye bildirmesiyle halledilir.
+            //    Burada sadece AST'deki Statement'ları döngüye alarak, içlerinde GcObject tutan
+            //    ValuePtr'lar varsa onları işaretleyebiliriz. Ancak AST düğümlerinin kendileri
+            //    GcObject olmadığı sürece burada doğrudan bir işaretlemeye gerek yoktur.
+            //    Eğer StmtPtr veya ExprPtr'lar GcObject'e referans tutuyorsa, bu kısım güncellenmeli.
+            //    Şimdilik AST düğümlerinin doğrudan GcObject olmadığını varsayıyoruz.
+            //    (Çünkü genellikle AST düğümleri sadece yapısal bilgi taşır ve runtime değerleri değillerdir).
+            //    Eğer StmtPtr içinde ValuePtr'lar olsaydı (örn. bir LiteralStmt), o zaman ValuePtr'ı tarardık:
+            
+            for (const auto& stmt : arg.first) {
+                // stmt'nin içinde ValuePtr var mı kontrol et, örneğin bir LiteralStmt'teki ValuePtr
+                if (auto literalStmt = std::dynamic_pointer_cast<LiteralStmt>(stmt)) {
+                    if (auto gcObj = literalStmt->value->getGcObject()) {
+                        gc.enqueueForMarking(gcObj);
+                    }
+                }
+                // Diğer statement türleri için de benzer kontroller yapılabilir
+            }
+            
         }
-        // PythonModuleHandle, NativeModuleHandle gibi sınıflar kendi içlerinde
-        // GcObject'lere referans tutmuyorsa (örn. sadece raw pointer veya FFI handle'larıysa),
-        // bu durumda markChildren'a ek bir şey gerekmez.
+        // Diğer handle türleri (Python, Native, Fortran, Julia) genellikle kendi içlerinde
+        // doğrudan GcObject'lere referans tutmazlar (raw pointerlar veya FFI handle'ları olabilirler).
+        // Bu nedenle, onlar için ek bir işaretleme işlemi gerekmez.
+        // Eğer bu handle'lar GcObject'leri sarmalayan özel C-CUBE objelerini (örn. C_CUBE_PythonObject)
+        // içerseydi, o zaman o objeler de işaretlenirdi.
+        else if constexpr (std::is_same_v<T, PythonModuleHandle> ||
+                           std::is_same_v<T, NativeModuleHandle>  ||
+                           std::is_same_v<T, FortranModuleHandle> ||
+                           std::is_same_v<T, JuliaModuleHandle>) {
+            // Bu handle'lar GcObject türevleri olmadığından ve kendi içlerinde GcObject tutmadıklarından
+            // burada özel bir işaretleme işlemi gerekmez.
+            // Eğer gelecekte bu handle'lar GcObject'lere referans verecek olsaydı, buraya ekleme yapardık.
+        }
+    }, content);
+}
         // Eğer bu handle'lar GcObject'leri sarmalıyorsa (örn. bir Python objesini temsil eden C_CUBE_Object),
         // o zaman onlar da işaretlenmelidir.
     }, content);
