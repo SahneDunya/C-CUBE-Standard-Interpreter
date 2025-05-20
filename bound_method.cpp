@@ -6,9 +6,8 @@ BoundMethod::BoundMethod(std::shared_ptr<CCubeInstance> instance, std::shared_pt
     : instance(instance), function(function) {}
 
 Value BoundMethod::call(Interpreter& interpreter, const std::vector<Value>& arguments) {
-    // Fonksiyonun closure'ından türeyen yeni bir ortam oluştur.
-    // Bu, 'this' değerinin yalnızca bu metodun yürütülmesi sırasında aktif olmasını sağlar
-    // ve fonksiyonun kendi kapsama zincirini korur.
+    return function->call(interpreter, arguments, instance);
+}
     std::shared_ptr<Environment> method_environment = std::make_shared<Environment>(function->getClosure());
 
     // 'this' anahtar kelimesini bu yeni ortama tanımla.
