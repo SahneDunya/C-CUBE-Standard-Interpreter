@@ -1,534 +1,471 @@
 #include "interpreter.h"
-#include "ast.h"
-#include "value.h"
-#include "environment.h"
-#include "token.h"
-#include <iostream>
-#include <vector>
-#include <string>
-#include <memory>
-#include <cmath> // pow için
+#include <cmath>     // pow için (üst alma)
+#include <algorithm> // for std::remove_if if needed, not directly used here but good to have for general list ops
+#include <sstream>   // for converting numbers to string
+#include <chrono>    // for native clock function
 
-// Hata raporlama fonksiyonu (main.cpp'de olmalı veya ayrı bir modül)
- extern bool hadRuntimeError; // Global hata flag'i (basitlik için)
- void runtimeError(const Token& token, const std::string& message); // Hata raporlama fonksiyonu
-
-// Interpreter sınıfı implementasyonu
-
-// Interpreter'ın hem StmtVisitor hem de ExprVisitor arayüzlerini implement ettiğini varsayalım
- class Interpreter : public StmtVisitor, public ExprVisitor { ... } şeklinde tanımlandıysa
-
-Interpreter::Interpreter() {
-    // Global ortamı başlat ve standart kütüphane fonksiyonlarını ekle
-    globals = std::make_shared<Environment>();
-    environment = globals; // Başlangıçta mevcut ortam global ortamdır
-
-    // Örnek: 'print' global fonksiyonunu ekle
-    // Built-in fonksiyonlar için özel bir Value tipi veya sınıfı gerekebilir
-    // Şimdilik print'i direk C++ kodu olarak burada işleyeceğiz.
-    // Eğer C-CUBE'dan çağrılacak bir fonksiyon olarak eklemek istiyorsanız:
-    
-    class BuiltinPrint : public C_CUBE_Callable { // C_CUBE_Callable özel bir sınıf
-    public:
-        int arity() const override { return 1; } // 1 argüman alır
-        ValuePtr call(Interpreter& interpreter, const std::vector<ValuePtr>& arguments) override {
-            // arguments[0]'ı yazdır
-            std::cout << valueToString(arguments[0]) << std::endl;
-            return std::make_shared<Value>(); // None döndür
-        }
-    };
-    globals->define("print", std::make_shared<Value>(std::make_shared<BuiltinPrint>()));
+// Constructor
+Interpreter::Interpreter(ErrorReporter& reporter, Gc& gc_instance, ModuleLoader& loader)
+    : globals(std::make_shared<Environment>()), environment(globals),
+      errorReporter(reporter), gc(gc_instance), moduleLoader(loader) {
+    // Yerleşik fonksiyonları global ortama ekle
+    BuiltinFunctions::defineBuiltins(globals, gc);
 }
 
+// Programı yorumlamaya başlar
 void Interpreter::interpret(const std::vector<StmtPtr>& statements) {
     try {
         for (const auto& stmt : statements) {
             execute(stmt);
         }
-    } catch (const std::runtime_error& error) {
-         runtimeError'ı yakala ve raporla
-         std::cerr << error.what() << std::endl;
-         hadRuntimeError = true;
+    } catch (const RuntimeException& e) {
+        errorReporter.runtimeError(e);
     }
 }
 
-// Deyim çalıştırma ana metodu (Visitor desenine göre accept çağırır)
+// Bir ifadeyi değerlendirir
+Value Interpreter::evaluate(ExprPtr expr) {
+    // Visitor desenini kullanarak uygun visit metodunu çağırır.
+    // Bu, AST düğümünün türüne göre doğru implementasyonun seçilmesini sağlar.
+    return expr->accept(*this);
+}
+
+// Bir bildirimi yürütür
 void Interpreter::execute(StmtPtr stmt) {
-    if (stmt) {
-        stmt->accept(*this); // İlgili ziyaretçi metodunu çağır
-    }
+    // Visitor desenini kullanarak uygun visit metodunu çağırır.
+    stmt->accept(*this);
 }
 
-// Blok deyimi çalıştırma (Yeni bir skop oluşturur)
-void Interpreter::executeBlock(const std::vector<StmtPtr>& statements, EnvironmentPtr environment) {
-    // Şu anki ortamı kaydet
-    EnvironmentPtr previous = this->environment;
-
-    try {
-        this->environment = environment; // Ortamı yeni blok ortamına ayarla
-        for (const auto& stmt : statements) {
-            execute(stmt); // Blok içindeki deyimleri çalıştır
-        }
-    } catch (...) {
-        // İstisnaları yakala ve ortamı geri yüklemeden yeniden fırlat
-        this->environment = previous; // Ortamı geri yükle
-        throw;
-    }
-    // Ortamı geri yükle
-    this->environment = previous;
-}
-
-// İfade değerlendirme ana metodu (Visitor desenine göre accept çağırır)
-ValuePtr Interpreter::evaluate(ExprPtr expr) {
-    if (expr) {
-       return expr->accept(*this); // İlgili ziyaretçi metodunu çağır ve değeri döndür
-    }
-    // Geçici olarak nullptr döndür, gerçekte hata fırlatılmalı veya None döndürülmeli
-    return nullptr;
-}
-
-
-// StmtVisitor Metodları Implementasyonu (ast.h'daki accept metodları bunları çağıracak)
-
-void Interpreter::visitExpressionStmt(const ExpressionStmt& stmt) {
-    evaluate(stmt.expression); // İfadeyi değerlendir, sonucu kullanma
-}
-
-void Interpreter::visitPrintStmt(const PrintStmt& stmt) {
-    ValuePtr value = evaluate(stmt.expression); // İfadeyi değerlendir
-     std::cout << valueToString(value) << std::endl; // Değeri string'e çevirip yazdır
-    // Basitlik için variant içindekini yazdırma (daha robust bir valueToString yazılmalı)
-    if (value) {
-         if (std::holds_alternative<std::string>(*value)) {
-             std::cout << std::get<std::string>(*value) << std::endl;
-         } else if (std::holds_alternative<double>(*value)) {
-             std::cout << std::get<double>(*value) << std::endl;
-         } else if (std::holds_alternative<bool>(*value)) {
-              std::cout << std::get<bool>(*value) << std::endl;
-         } else if (std::holds_alternative<std::monostate>(*value)) {
-              std::cout << "none" << std::endl; // None değerini yazdırma
-         } else {
-              std::cout << "[object or unknown type]" << std::endl; // Diğer tipler için yer tutucu
-         }
-    } else {
-         std::cout << "nullptr value" << std::endl; // evaluate null döndürürse
-    }
-}
-
-void Interpreter::visitVarDeclStmt(const VarDeclStmt& stmt) {
-    ValuePtr value = nullptr; // Varsayılan değer none
-    if (stmt.initializer) {
-        value = evaluate(stmt.initializer); // Başlangıç değeri varsa değerlendir
-    } else {
-        value = std::make_shared<Value>(); // Yoksa default none
-    }
-    environment->define(stmt.name.lexeme, value); // Ortama tanımla
-}
-
-void Interpreter::visitBlockStmt(const BlockStmt& stmt) {
-    // Yeni bir ortam oluştur ve bloğu çalıştır
-    executeBlock(stmt.statements, std::make_shared<Environment>(this->environment));
-}
-
-void Interpreter::visitIfStmt(const IfStmt& stmt) {
-    ValuePtr condition = evaluate(stmt.condition); // Koşulu değerlendir
-
-    // isTruthy fonksiyonu ValuePtr'ı bool'a çevirmeli (Python gibi)
-     bool isTruthy(ValuePtr value); // Value.h'da implement edilebilir
-
-    // Geçici isTruthy implementasyonu:
-    bool condition_is_true = false;
-    if (condition) {
-        if (std::holds_alternative<bool>(*condition)) {
-            condition_is_true = std::get<bool>(*condition);
-        } else if (std::holds_alternative<std::monostate>(*condition)) {
-            condition_is_true = false; // None false'tur
-        } else if (std::holds_alternative<double>(*condition)) {
-             condition_is_true = std::get<double>(*condition) != 0; // Sayı 0 değilse true
-        } else if (std::holds_alternative<std::string>(*condition)) {
-             condition_is_true = !std::get<std::string>(*condition).empty(); // String boş değilse true
-        } // Diğer tipler için varsayılan false olabilir
-    }
-
-
-    if (condition_is_true) {
-        execute(stmt.thenBranch); // if bloğunu çalıştır
-    } else if (stmt.elseBranch) {
-        execute(stmt.elseBranch); // else bloğunu çalıştır (varsa)
-    }
-}
-
-void Interpreter::visitWhileStmt(const WhileStmt& stmt) {
-     // Geçici isTruthy kullanılıyor
-    while (true) {
-         ValuePtr condition = evaluate(stmt.condition);
-         bool condition_is_true = false;
-         if (condition) {
-             if (std::holds_alternative<bool>(*condition)) {
-                 condition_is_true = std::get<bool>(*condition);
-             } else if (std::holds_alternative<std::monostate>(*condition)) {
-                 condition_is_true = false;
-             } else if (std::holds_alternative<double>(*condition)) {
-                  condition_is_true = std::get<double>(*condition) != 0;
-             } else if (std::holds_alternative<std::string>(*condition)) {
-                  condition_is_true = !std::get<std::string>(*condition).empty();
-             }
-         }
-
-         if (!condition_is_true) break; // Koşul false ise döngüden çık
-
-         execute(stmt.body); // Döngü gövdesini çalıştır
-    }
-}
-
-// Fonksiyon, Return, Sınıf, Import, Match deyimleri daha sonra implement edilecek...
-void Interpreter::visitFunDeclStmt(const FunDeclStmt& stmt) {
-     // Fonksiyon tanımlama implementasyonu (fonksiyon objesi oluşturulmalı)
-     std::cerr << "Warning: Function declaration not fully implemented." << std::endl;
-}
-
-void Interpreter::visitReturnStmt(const ReturnStmt& stmt) {
-     // Return deyimi implementasyonu (istisna fırlatmak yaygın bir yöntemdir)
-      std::cerr << "Warning: Return statement not fully implemented." << std::endl;
-       ValuePtr value = nullptr;
-       if (stmt.value) value = evaluate(stmt.value);
-       throw ReturnException(value); // Özel bir istisna sınıfı
-}
-
-void Interpreter::visitClassDeclStmt(const ClassDeclStmt& stmt) {
-      // Sınıf tanımı implementasyonu (sınıf objesi oluşturulmalı)
-       std::cerr << "Warning: Class declaration not fully implemented." << std::endl;
-}
-
-void Interpreter::visitImportStmt(const ImportStmt& stmt) {
-    // Import deyimi implementasyonu (dosyayı bul, parse et, çalıştır)
-    // Çok dilli import çok daha sonra implement edilecek
-     std::cerr << "Warning: Import statement not fully implemented." << std::endl;
-}
-
-void Interpreter::visitMatchStmt(const MatchStmt& stmt) {
-    // Match deyimi implementasyonu
-     std::cerr << "Warning: Match statement not fully implemented." << std::endl;
-     // Evaluate the subject
-     // Iterate through cases
-     // Evaluate pattern of each case
-     // Check if subject matches pattern
-     // If match, execute case body and break
-}
-
-
-// ExprVisitor Metodları Implementasyonu
-
-ValuePtr Interpreter::visitAssignExpr(const AssignExpr& expr) {
-    ValuePtr value = evaluate(expr.value); // Atanacak değeri değerlendir
-    // Değişkeni ortamda ara ve değeri ata
-    environment->assign(expr.name, value);
-    return value; // Atanan değeri döndür (Python gibi)
-}
-
-ValuePtr Interpreter::visitBinaryExpr(const BinaryExpr& expr) {
-    ValuePtr left = evaluate(expr.left);   // Sol operandı değerlendir
-    ValuePtr right = evaluate(expr.right); // Sağ operandı değerlendir
-
-    // İkili operatör mantığı (Tip kontrolü ve hata yönetimi çok önemli!)
-    // Şu an sadece sayısal operatörler ve string birleştirme örneği
-
-    switch (expr.op.type) {
-        case TokenType::GREATER:
-        case TokenType::GREATER_EQUAL:
-        case TokenType::LESS:
-        case TokenType::LESS_EQUAL:
-        case TokenType::EQUAL_EQUAL:
-        case TokenType::BANG_EQUAL: {
-            // Karşılaştırma operatörleri
-            // Operandların aynı tipte ve karşılaştırılabilir olduğunu varsayalım
-            if (std::holds_alternative<double>(*left) && std::holds_alternative<double>(*right)) {
-                double l = std::get<double>(*left);
-                double r = std::get<double>(*right);
-                switch (expr.op.type) {
-                    case TokenType::GREATER:       return std::make_shared<Value>(l > r);
-                    case TokenType::GREATER_EQUAL: return std::make_shared<Value>(l >= r);
-                    case TokenType::LESS:          return std::make_shared<Value>(l < r);
-                    case TokenType::LESS_EQUAL:    return std::make_shared<Value>(l <= r);
-                    case TokenType::EQUAL_EQUAL:   return std::make_shared<Value>(l == r);
-                    case TokenType::BANG_EQUAL:    return std::make_shared<Value>(l != r);
-                    default: break; // Ulaşılmamalı
-                }
-            } else if (std::holds_alternative<std::string>(*left) && std::holds_alternative<std::string>(*right)) {
-                 std::string l = std::get<std::string>(*left);
-                 std::string r = std::get<std::string>(*right);
-                 switch (expr.op.type) {
-                    case TokenType::EQUAL_EQUAL: return std::make_shared<Value>(l == r);
-                    case TokenType::BANG_EQUAL:  return std::make_shared<Value>(l != r);
-                    default:
-                         // Stringler için sadece eşitlik/eşitsizlik tanımlı olsun
-                         std::cerr << "[Line " << expr.op.line << "] Runtime Error: Invalid operator for strings." << std::endl;
-                         / throw std::runtime_error("Invalid operator for strings.");
-                         return nullptr; // Hata durumunda
-                 }
-            }
-            // Diğer tip karşılaştırmaları (bool, None vb.) buraya eklenebilir
-             else if (std::holds_alternative<bool>(*left) && std::holds_alternative<bool>(*right)) {
-                bool l = std::get<bool>(*left);
-                bool r = std::get<bool>(*right);
-                 switch (expr.op.type) {
-                    case TokenType::EQUAL_EQUAL: return std::make_shared<Value>(l == r);
-                    case TokenType::BANG_EQUAL:  return std::make_shared<Value>(l != r);
-                     default:
-                        std::cerr << "[Line " << expr.op.line << "] Runtime Error: Invalid operator for booleans." << std::endl;
-                         return nullptr;
-                 }
-            } else {
-                // Uyumsuz tipler hatası
-                 runtimeError(expr.op, "Operands must be numbers for arithmetic operations.");
-                 std::cerr << "[Line " << expr.op.line << "] Runtime Error: Incompatible types for comparison." << std::endl;
-                 throw std::runtime_error("Incompatible types for comparison.");
-                return nullptr; // Hata durumunda
-            }
-            break;
-        }
-        case TokenType::MINUS:
-        case TokenType::SLASH:
-        case TokenType::STAR: {
-             // Aritmetik operatörler (Sadece sayıları desteklesin)
-            if (std::holds_alternative<double>(*left) && std::holds_alternative<double>(*right)) {
-                 double l = std::get<double>(*left);
-                 double r = std::get<double>(*right);
-                 switch (expr.op.type) {
-                     case TokenType::MINUS: return std::make_shared<Value>(l - r);
-                     case TokenType::SLASH:
-                         if (r == 0) {
-                             runtimeError(expr.op, "Division by zero.");
-                            std::cerr << "[Line " << expr.op.line << "] Runtime Error: Division by zero." << std::endl;
-                             throw std::runtime_error("Division by zero.");
-                            return nullptr; // Hata durumunda
-                         }
-                         return std::make_shared<Value>(l / r);
-                     case TokenType::STAR: return std::make_shared<Value>(l * r);
-                     default: break; // Ulaşılmamalı
-                 }
-            } else {
-                // Uyumsuz tipler hatası
-                 runtimeError(expr.op, "Operands must be numbers for arithmetic operations.");
-                 std::cerr << "[Line " << expr.op.line << "] Runtime Error: Operands must be numbers for arithmetic operations." << std::endl;
-                 throw std::runtime_error("Operands must be numbers for arithmetic operations.");
-                return nullptr; // Hata durumunda
-            }
-            break;
-        }
-         case TokenType::PLUS: {
-              // Toplama operatörü (Sayısal toplama veya string birleştirme)
-             if (std::holds_alternative<double>(*left) && std::holds_alternative<double>(*right)) {
-                 return std::make_shared<Value>(std::get<double>(*left) + std::get<double>(*right));
-             } else if (std::holds_alternative<std::string>(*left) && std::holds_alternative<std::string>(*right)) {
-                 return std::make_shared<Value>(std::get<std::string>(*left) + std::get<std::string>(*right));
-             } else {
-                 // Uyumsuz tipler hatası
-                 std::cerr << "[Line " << expr.op.line << "] Runtime Error: Operands must be two numbers or two strings." << std::endl;
-                 return nullptr; // Hata durumunda
-             }
-             break;
-         }
-        default: break; // Diğer operatörler (mantıksal vb.) burada ele alınacak
-    }
-
-    // Ulaşılmamalı
-    return nullptr;
-}
-
-ValuePtr Interpreter::visitCallExpr(const CallExpr& expr) {
-     // Fonksiyon/Metot çağrısı implementasyonu
-      std::cerr << "Warning: Function call not fully implemented." << std::endl;
-    // Evaluate the callee (the expression that produces the function/object)
-    // Evaluate the arguments
-    // Check if the callee is callable (is a function object)
-    // Call the callable object with evaluated arguments
-     return nullptr;
-}
-
-ValuePtr Interpreter::visitGetExpr(const GetExpr& expr) {
-    // Obje özelliği alma implementasyonu
-     std::cerr << "Warning: Object property get not fully implemented." << std::endl;
-    // Evaluate the object expression
-    // Check if the result is an object
-    // Get the property from the object
-     return nullptr;
-}
-
-ValuePtr Interpreter::visitGroupingExpr(const GroupingExpr& expr) {
-    return evaluate(expr.expression); // Parantez içindeki ifadeyi değerlendir
-}
-
-ValuePtr Interpreter::visitLiteralExpr(const LiteralExpr& expr) {
-    // Literal değeri döndür (Token'daki lexeme'den ValuePtr oluştur)
-    // Token'da literal saklıyorsak onu direk döndürürüz
-    // Şimdilik lexeme'den ValuePtr oluşturuyoruz:
-    if (expr.value.type == TokenType::NUMBER) {
-        // Lexeme'yi double'a çevir
-        try {
-            return std::make_shared<Value>(std::stod(expr.value.lexeme));
-        } catch (const std::exception& e) {
-            // Sayı çevirme hatası (lexical analizde yakalanmalıydı aslında)
-            std::cerr << "[Line " << expr.value.line << "] Runtime Error: Invalid number literal '" << expr.value.lexeme << "'." << std::endl;
-             return nullptr;
-        }
-    } else if (expr.value.type == TokenType::STRING) {
-        // Lexeme zaten string değeri
-        return std::make_shared<Value>(expr.value.lexeme);
-    } else if (expr.value.type == TokenType::TRUE) {
-        return std::make_shared<Value>(true);
-    } else if (expr.value.type == TokenType::FALSE) {
-        return std::make_shared<Value>(false);
-    } else if (expr.value.type == TokenType::NONE) {
-        return std::make_shared<Value>(); // std::monostate içeren Value (None)
-    }
-
-    // Diğer literal tipleri (ileride eklenecekler)
-    return nullptr; // Bilinmeyen literal tipi
-}
-
-ValuePtr Interpreter::visitLogicalExpr(const LogicalExpr& expr) {
-    ValuePtr left = evaluate(expr.left); // Sol operandı değerlendir
-
-    // Mantıksal 'or' veya 'and' kısa devre mantığı
-    if (expr.op.type == TokenType::OR) {
-        // Eğer sol operand 'truthy' ise, sağ operandı değerlendirmeye gerek yok
-        if (isTruthy(left)) return left;
-    } else { // TokenType::AND
-        // Eğer sol operand 'falsy' ise, sağ operandı değerlendirmeye gerek yok
-        if (!isTruthy(left)) return left;
-    }
-
-    // Kısa devre olmadıysa, sağ operandı değerlendir
-    return evaluate(expr.right);
-}
-
-ValuePtr Interpreter::visitSetExpr(const SetExpr& expr) {
-     // Obje özelliği atama implementasyonu
-      std::cerr << "Warning: Object property set not fully implemented." << std::endl;
-    // Evaluate the object expression
-    // Check if the result is an object
-    // Evaluate the value to be assigned
-    // Set the property on the object
-     return nullptr;
-}
-
-ValuePtr Interpreter::visitSuperExpr(const SuperExpr& expr) {
-     // Super anahtar kelimesi implementasyonu
-      std::cerr << "Warning: 'super' not fully implemented." << std::endl;
-     return nullptr;
-}
-
-ValuePtr Interpreter::visitThisExpr(const ThisExpr& expr) {
-     // this anahtar kelimesi implementasyonu
-      std::cerr << "Warning: 'this' not fully implemented." << std::endl;
-    // Resolve 'this' to the current instance object
-     return nullptr;
-}
-
-ValuePtr Interpreter::visitUnaryExpr(const UnaryExpr& expr) {
-    ValuePtr right = evaluate(expr.right); // Sağ operandı değerlendir
-
-    switch (expr.op.type) {
-        case TokenType::BANG: // Mantıksal NOT (!)
-              return std::make_shared<Value>(!isTruthy(right));
-             if (right) return std::make_shared<Value>(!isTruthy(right));
-             break;
-        case TokenType::MINUS: // Negatif sayı (-)
-             // Sadece sayıları desteklesin
-             if (right && std::holds_alternative<double>(*right)) {
-                 return std::make_shared<Value>(-std::get<double>(*right));
-             } else {
-                 // Uyumsuz tip hatası
-                  std::cerr << "[Line " << expr.op.line << "] Runtime Error: Operand must be a number for unary minus." << std::endl;
-                  throw std::runtime_error("Operand must be a number for unary minus.");
-                 return nullptr;
-             }
-             break;
-        default: break; // Ulaşılmamalı
-    }
-     // Ulaşılmamalı
-    return nullptr;
-}
-
-ValuePtr Interpreter::visitVariableExpr(const VariableExpr& expr) {
-    // Değişkenin değerini ortamdan al
-    return environment->get(expr.name);
-}
-
-ValuePtr Interpreter::visitMatchExpr(const MatchExpr& expr) {
-     // Match ifadesi (expression olarak) implementasyonu
-      std::cerr << "Warning: Match expression not fully implemented." << std::endl;
-     // Similar logic to visitMatchStmt, but returns the value of the matched case's expression
-     return nullptr;
-}
-
-
-// Yardımcı Fonksiyonlar Implementasyonu
-
-// ValuePtr'ı bool'a çevirir (Python'daki truthiness kurallarına yakın)
-bool Interpreter::isTruthy(ValuePtr value) {
-    if (!value) return false; // Null pointer false
-    if (std::holds_alternative<std::monostate>(*value)) return false; // None false
-    if (std::holds_alternative<bool>(*value)) return std::get<bool>(*value); // Boolean değeri
-    if (std::holds_alternative<double>(*value)) return std::get<double>(*value) != 0; // Sayı 0 değilse true
-    if (std::holds_alternative<std::string>(*value)) return !std::get<std::string>(*value).empty(); // String boş değilse true
-
-    // Diğer tipler için varsayılan true olabilir (Python'daki gibi listeler, objeler vb.)
+// Bir değerin doğruluk değerini kontrol eder (Python'daki gibi)
+bool Interpreter::isTruthy(const Value& value) {
+    if (std::holds_alternative<std::monostate>(value)) return false; // none is false
+    if (std::holds_alternative<bool>(value)) return std::get<bool>(value);
+    if (std::holds_alternative<double>(value)) return std::get<double>(value) != 0.0;
+    if (std::holds_alternative<std::string>(value)) return !std::get<std::string>(value).empty();
+    // Diğer tüm objeler (fonksiyonlar, sınıflar, objeler) true'dur.
     return true;
 }
 
-// ValuePtr'ı string'e çevirir (yazdırmak için) - daha robust implementasyon gerekebilir
- std::string Interpreter::valueToString(ValuePtr value) {
-//    // Implement this based on Value variants
-     if (!value) return "null";
-     if (std::holds_alternative<std::monostate>(*value)) return "none";
-     if (std::holds_alternative<bool>(*value)) return std::get<bool>(*value) ? "true" : "false";
-     if (std::holds_alternative<double>(*value)) return std::to_string(std::get<double>(*value));
-     if (std::holds_alternative<std::string>(*value)) return std::get<std::string>(*value);
-//     // Diğer tipler için uygun çeviriler
-     return "[object or unknown type]";
- }
+// İki değerin eşitliğini kontrol eder
+bool Interpreter::isEqual(const Value& a, const Value& b) {
+    // Aynı türde değillerse eşit değildir
+    if (a.index() != b.index()) return false;
 
-// Runtime Hata Raporlama (main.cpp'de olmalı)
-
-void runtimeError(const Token& token, const std::string& message) {
-    std::cerr << "[Line " << token.line << "] Runtime Error: " << message << std::endl;
-    hadRuntimeError = true;
+    if (std::holds_alternative<std::monostate>(a)) {
+        return true; // none == none
+    } else if (std::holds_alternative<bool>(a)) {
+        return std::get<bool>(a) == std::get<bool>(b);
+    } else if (std::holds_alternative<double>(a)) {
+        return std::get<double>(a) == std::get<double>(b);
+    } else if (std::holds_alternative<std::string>(a)) {
+        return std::get<std::string>(a) == std::get<std::string>(b);
+    } else if (std::holds_alternative<ObjPtr>(a)) {
+        // Obje pointer'ları doğrudan karşılaştırılır (aynı obje mi?)
+        return std::get<ObjPtr>(a) == std::get<ObjPtr>(b);
+    }
+    // Diğer türler için özel eşitlik mantığı eklenebilir.
+    return false;
 }
-Interpreter::Interpreter(ErrorReporter& errorReporter, const std::vector<std::string>& moduleSearchPaths)
-    : errorReporter(errorReporter), // varsayalım ki errorReporter üyesi var
-      globals(std::make_shared<Environment>()), // global ortam
-      environment(globals), // başlangıçta mevcut ortam global'e eşit
-      moduleLoader(*this, moduleSearchPaths) // ModuleLoader'ı başlat
-{
-    // Built-in fonksiyonları burada veya ayrı bir fonksiyonda tanımla
-    // builtins.registerBuiltins(globals); // Eğer böyle bir metodunuz varsa
+
+// Sayı operandı kontrolü (tekli)
+void Interpreter::checkNumberOperand(const Token& op, const Value& operand) {
+    if (std::holds_alternative<double>(operand)) return;
+    throw runtimeError(op, "Operand bir sayı olmalıdır.");
 }
-void Interpreter::visitImportStmt(const ImportStmt& stmt) {
-    // Modül adını çözümle (örn. "game.utils" -> "game/utils")
-    std::string modulePath = stmt.moduleName.lexeme; // Token'dan al
 
-    ModulePtr importedModule = moduleLoader.loadModule(modulePath);
+// Sayı operandı kontrolü (ikili)
+void Interpreter::checkNumberOperands(const Token& op, const Value& left, const Value& right) {
+    if (std::holds_alternative<double>(left) && std::holds_alternative<double>(right)) return;
+    throw runtimeError(op, "Operandlar sayı olmalıdır.");
+}
 
-    if (!importedModule) {
-        // Hata zaten ModuleLoader tarafından raporlanmış olmalı
-        throw RuntimeException(stmt.moduleName, "Failed to import module '" + modulePath + "'.");
+// Çalışma zamanı hatası fırlatır
+RuntimeException Interpreter::runtimeError(const Token& token, const std::string& message) {
+    return RuntimeException(token, message);
+}
+
+// Ortam yönetimi: Yeni bir ortamda kod bloğunu yürütür
+void Interpreter::executeBlock(const std::vector<StmtPtr>& statements, std::shared_ptr<Environment> newEnvironment) {
+    std::shared_ptr<Environment> previousEnvironment = this->environment;
+    try {
+        this->environment = newEnvironment; // Ortamı yeniye ayarla
+        for (const auto& stmt : statements) {
+            execute(stmt);
+        }
+    } catch (...) {
+        this->environment = previousEnvironment; // Çıkarken eski ortama geri dön
+        throw; // Yakalanan exception'ı tekrar fırlat
+    }
+    this->environment = previousEnvironment; // Normalde eski ortama geri dön
+}
+
+// Değişken çözümlemesi (Şimdilik doğrudan ortamda arama yapar)
+Value Interpreter::lookUpVariable(const Token& name) {
+    // Resolver henüz entegre edilmediği için doğrudan mevcut ortamda arama yaparız.
+    // Eğer değişken mevcut ortamda yoksa, global ortama kadar yukarı çıkarız.
+    // Resolver entegre edildiğinde, burada 'locals' map'i kullanılacak.
+    if (environment->contains(name.lexeme)) {
+        return environment->get(name);
+    } else if (globals->contains(name.lexeme)) {
+        return globals->get(name);
+    }
+    throw runtimeError(name, "Tanımlanmamış değişken '" + name.lexeme + "'.");
+}
+
+
+// --- ExprVisitor Metotlarının Implementasyonları ---
+
+Value Interpreter::visitBinaryExpr(std::shared_ptr<BinaryExpr> expr) {
+    Value left = evaluate(expr->left);
+    Value right = evaluate(expr->right);
+
+    switch (expr->op.type) {
+        case TokenType::MINUS:
+            checkNumberOperands(expr->op, left, right);
+            return std::get<double>(left) - std::get<double>(right);
+        case TokenType::SLASH:
+            checkNumberOperands(expr->op, left, right);
+            if (std::get<double>(right) == 0.0) {
+                throw runtimeError(expr->op, "Sıfıra bölme hatası.");
+            }
+            return std::get<double>(left) / std::get<double>(right);
+        case TokenType::STAR:
+            checkNumberOperands(expr->op, left, right);
+            return std::get<double>(left) * std::get<double>(right);
+        case TokenType::PLUS:
+            if (std::holds_alternative<double>(left) && std::holds_alternative<double>(right)) {
+                return std::get<double>(left) + std::get<double>(right);
+            }
+            if (std::holds_alternative<std::string>(left) && std::holds_alternative<std::string>(right)) {
+                return std::get<std::string>(left) + std::get<std::string>(right);
+            }
+            throw runtimeError(expr->op, "Operanlar sayılar veya stringler olmalıdır.");
+        case TokenType::GREATER:
+            checkNumberOperands(expr->op, left, right);
+            return std::get<double>(left) > std::get<double>(right);
+        case TokenType::GREATER_EQUAL:
+            checkNumberOperands(expr->op, left, right);
+            return std::get<double>(left) >= std::get<double>(right);
+        case TokenType::LESS:
+            checkNumberOperands(expr->op, left, right);
+            return std::get<double>(left) < std::get<double>(right);
+        case TokenType::LESS_EQUAL:
+            checkNumberOperands(expr->op, left, right);
+            return std::get<double>(left) <= std::get<double>(right);
+        case TokenType::BANG_EQUAL: return !isEqual(left, right);
+        case TokenType::EQUAL_EQUAL: return isEqual(left, right);
+        default:
+            // Ulaşılmamalı
+            break;
+    }
+    return std::monostate{}; // Varsayılan dönüş
+}
+
+Value Interpreter::visitCallExpr(std::shared_ptr<CallExpr> expr) {
+    Value callee = evaluate(expr->callee); // Çağrılan ifadeyi değerlendir
+
+    std::vector<Value> arguments;
+    for (const auto& arg : expr->arguments) {
+        arguments.push_back(evaluate(arg));
     }
 
-    // C-CUBE'da modülün nasıl temsil edileceğine karar verin:
-    // 1. Modülün global ortamını mı döndürüyor?
-    // 2. Modülü temsil eden özel bir C_CUBE_Module nesnesi mi döndürüyor?
+    if (!std::holds_alternative<ObjPtr>(callee)) {
+        throw runtimeError(expr->paren, "Sadece fonksiyonlar ve sınıflar çağrılabilir.");
+    }
 
-    // Eğer ModuleLoader'ın `readModule` metodu doğrudan bir `ValuePtr` (C_CUBE_Module objesi) döndürseydi,
-    // bu daha temiz olurdu. Şimdilik varsayalım ki `ModulePtr` bir `C_CUBE_Module` objesidir.
-    // Ve bu objenin "export" ettiği değerlere bir şekilde erişilebilir.
+    ObjPtr obj_callee = std::get<ObjPtr>(callee);
+    if (!obj_callee->isCallable()) {
+        throw runtimeError(expr->paren, "Sadece fonksiyonlar ve sınıflar çağrılabilir.");
+    }
 
-    // Modülü yerel ortamda veya global ortamda bir değişkene atayın
-    // Örn: `import foo` -> `foo` değişkenine modül objesini ata
-    // `import foo as bar` -> `bar` değişkenine modül objesini ata
-    std::string alias = stmt.alias.has_value() ? stmt.alias.value().lexeme : stmt.moduleName.lexeme;
-    environment->define(alias, std::make_shared<Value>(importedModule)); // importedModule'ın kendisi bir ValuePtr olmalı
-                                                                          // veya bir C_CUBE_Module'ı Value'ye sar.
-                                                                          // Burada `Value` içine `ModulePtr`'ı sarmalamak mantıklı.
+    Callable* callable = static_cast<Callable*>(obj_callee.get());
+
+    if (arguments.size() != callable->arity()) {
+        throw runtimeError(expr->paren, "Beklenen " + std::to_string(callable->arity()) +
+                                        " argüman, ancak " + std::to_string(arguments.size()) + " geldi.");
+    }
+
+    return callable->call(*this, arguments);
+}
+
+Value Interpreter::visitGetExpr(std::shared_ptr<GetExpr> expr) {
+    Value object = evaluate(expr->object);
+
+    if (std::holds_alternative<ObjPtr>(object)) {
+        ObjPtr instance = std::get<ObjPtr>(object);
+        if (instance->getType() == Object::ObjectType::INSTANCE) {
+            auto ccube_instance = std::static_pointer_cast<CCubeInstance>(instance);
+            Value result = ccube_instance->get(expr->name);
+            if (std::holds_alternative<ObjPtr>(result) && std::static_pointer_cast<CCubeFunction>(std::get<ObjPtr>(result))) {
+                // Metodu objeye bağla
+                return std::make_shared<BoundMethod>(ccube_instance, std::static_pointer_cast<CCubeFunction>(std::get<ObjPtr>(result)));
+            }
+            return result;
+        } else if (instance->getType() == Object::ObjectType::C_CUBE_MODULE) {
+            // Modül içindeki üyeye erişim
+            auto module = std::static_pointer_cast<CCubeModule>(instance);
+            return module->getMember(expr->name);
+        }
+    }
+    // Diğer tiplerde property erişimi hata verir
+    throw runtimeError(expr->name, "Sadece objeler, modüller veya sınıflar property'lere sahip olabilir.");
+}
+
+Value Interpreter::visitGroupingExpr(std::shared_ptr<GroupingExpr> expr) {
+    return evaluate(expr->expression);
+}
+
+Value Interpreter::visitLiteralExpr(std::shared_ptr<LiteralExpr> expr) {
+    return expr->value;
+}
+
+Value Interpreter::visitLogicalExpr(std::shared_ptr<LogicalExpr> expr) {
+    Value left = evaluate(expr->left);
+
+    if (expr->op.type == TokenType::OR) {
+        if (isTruthy(left)) return left; // Sol doğruysa, sağa bakmaya gerek yok
+    } else { // AND
+        if (!isTruthy(left)) return left; // Sol yanlışsa, sağa bakmaya gerek yok
+    }
+
+    return evaluate(expr->right); // Sağ tarafı değerlendir
+}
+
+Value Interpreter::visitSetExpr(std::shared_ptr<SetExpr> expr) {
+    Value object = evaluate(expr->object); // Obje değerini al
+
+    if (!std::holds_alternative<ObjPtr>(object) || std::get<ObjPtr>(object)->getType() != Object::ObjectType::INSTANCE) {
+        throw runtimeError(expr->name, "Sadece objelerin property'leri atanabilir.");
+    }
+
+    Value value = evaluate(expr->value); // Atanacak değeri al
+    std::static_pointer_cast<CCubeInstance>(std::get<ObjPtr>(object))->set(expr->name, value);
+    return value; // Atanan değeri döndür
+}
+
+Value Interpreter::visitSuperExpr(std::shared_ptr<SuperExpr> expr) {
+    // Resolver varsa, 'locals' map'ini kullanırız. Resolver yoksa, bu biraz daha karmaşık.
+    // Şimdilik, 'super' bağlamını en yakın üst sınıfın metoduna bağlarız.
+    // Varsayım: 'super' keyword'ü her zaman 'this' gibi bir instance method içinde kullanılır.
+
+    // Super sınıfını bul
+    // Burası, resolver'ın scope depth'ini veya başka bir bağlam bilgisini sağlamasını gerektirecek.
+    // Şimdilik, basit bir örnek olarak, bir "geçici" mekanizma kullanalım.
+    // Gerçek implementasyonda, resolver 'super' için özel bir scope depth verir.
+
+    // `this` için `CCubeInstance`'ı bulmalıyız. Bu genelde mevcut environment'ın bir özelliği olur.
+    // Eğer `this` kelimesi çözüldüyse, onun değeri zaten mevcut ortamda olmalı.
+
+    // Geçici çözüm: `this`'i ortamdan bul
+    Value this_value = environment->get(Token(TokenType::THIS, "this", std::monostate{}, expr->keyword.line));
+    if (!std::holds_alternative<ObjPtr>(this_value) || std::get<ObjPtr>(this_value)->getType() != Object::ObjectType::INSTANCE) {
+        throw runtimeError(expr->keyword, "'super' anahtar kelimesi sadece metot içinde kullanılabilir.");
+    }
+    std::shared_ptr<CCubeInstance> instance = std::static_pointer_cast<CCubeInstance>(std::get<ObjPtr>(this_value));
+
+    // Üst sınıfı bul (Bu bilgi genellikle ClassStmt'den veya Resolver'dan gelir)
+    // `instance->get_class()` bize mevcut sınıfı verir.
+    // `instance->get_class()->superclass` bize üst sınıfı verir.
+    std::shared_ptr<CCubeClass> superclass = instance->get_class()->superclass;
+
+    if (superclass == nullptr) {
+        throw runtimeError(expr->keyword, "Üst sınıfı olmayan bir objenin 'super' metodu çağrılamaz.");
+    }
+
+    // Metodu üst sınıftan al
+    std::shared_ptr<CCubeFunction> method = superclass->findMethod(expr->method.lexeme);
+
+    if (method == nullptr) {
+        throw runtimeError(expr->method, "Tanımlanmamış üst sınıf metodu '" + expr->method.lexeme + "'.");
+    }
+
+    // Metodu mevcut instance'a bağla ve döndür
+    return std::make_shared<BoundMethod>(instance, method);
+}
+
+Value Interpreter::visitThisExpr(std::shared_ptr<ThisExpr> expr) {
+    return lookUpVariable(expr->keyword); // 'this' bir değişkendir
+}
+
+Value Interpreter::visitUnaryExpr(std::shared_ptr<UnaryExpr> expr) {
+    Value right = evaluate(expr->right);
+
+    switch (expr->op.type) {
+        case TokenType::BANG: return !isTruthy(right);
+        case TokenType::MINUS:
+            checkNumberOperand(expr->op, right);
+            return -std::get<double>(right);
+        default:
+            // Ulaşılmamalı
+            break;
+    }
+    return std::monostate{}; // Varsayılan dönüş
+}
+
+Value Interpreter::visitVariableExpr(std::shared_ptr<VariableExpr> expr) {
+    return lookUpVariable(expr->name);
+}
+
+Value Interpreter::visitListLiteralExpr(std::shared_ptr<ListLiteralExpr> expr) {
+    std::vector<Value> elements;
+    for (const auto& elem_expr : expr->elements) {
+        elements.push_back(evaluate(elem_expr));
+    }
+    // GC tarafından yönetilen bir liste objesi oluştur
+    return gc.createList(elements);
+}
+
+
+// --- StmtVisitor Metotlarının Implementasyonları ---
+
+void Interpreter::visitBlockStmt(std::shared_ptr<BlockStmt> stmt) {
+    // Yeni bir ortam oluştur ve bloğu bu ortamda yürüt
+    executeBlock(stmt->statements, std::make_shared<Environment>(environment));
+}
+
+void Interpreter::visitClassStmt(std::shared_ptr<ClassStmt> stmt) {
+    Value superclass_value = std::monostate{};
+    std::shared_ptr<CCubeClass> superclass = nullptr;
+
+    if (stmt->superclass != nullptr) {
+        superclass_value = evaluate(stmt->superclass);
+        if (!std::holds_alternative<ObjPtr>(superclass_value) || std::get<ObjPtr>(superclass_value)->getType() != Object::ObjectType::CLASS) {
+            throw runtimeError(stmt->superclass->name, "Üst sınıf bir sınıf olmalıdır."); // Name member is not available on ExprPtr
+        }
+        superclass = std::static_pointer_cast<CCubeClass>(std::get<ObjPtr>(superclass_value));
+    }
+
+    // Sınıfı ortamda tanımla (geçici olarak null)
+    // Bu, sınıfın kendi içinde referans verilmesini sağlar.
+    environment->define(stmt->name.lexeme, std::monostate{}); // Placeholder
+
+    // Metotları depolamak için bir harita oluştur
+    std::unordered_map<std::string, std::shared_ptr<CCubeFunction>> methods;
+    for (const auto& method_stmt : stmt->methods) {
+        // 'this' anahtar kelimesini ve 'super' çağrılarını doğru bağlamak için
+        // fonksiyonu tanımlandığı ortamdan almalıyız.
+        std::shared_ptr<CCubeFunction> function = std::make_shared<CCubeFunction>(method_stmt, environment, method_stmt->name.lexeme == "init");
+        gc.addRoot(function); // GC kökü olarak ekle
+
+        methods[method_stmt->name.lexeme] = function;
+    }
+
+    // CCubeClass objesini oluştur ve global ortama ekle (veya bulunduğu ortama)
+    std::shared_ptr<CCubeClass> klass = std::make_shared<CCubeClass>(stmt->name.lexeme, superclass, methods);
+    gc.addRoot(klass); // GC kökü olarak ekle
+
+    environment->assign(stmt->name, gc.createObject(klass)); // Sınıfı ortamda ata
+}
+
+void Interpreter::visitExprStmt(std::shared_ptr<ExprStmt> stmt) {
+    Value result = evaluate(stmt->expression);
+    // REPL modunda ise sonucu yazdır (main.cpp'deki runRepl'den çağrıldığında)
+    // Şimdilik manuel olarak print etmiyoruz, kullanıcı print() çağrısını kullanmalı.
+     printValue(result); // Eğer REPL'de son ifade çıktısı isteniyorsa
+}
+
+void Interpreter::visitFunStmt(std::shared_ptr<FunStmt> stmt) {
+    // Bir C-CUBE fonksiyonu oluştur
+    std::shared_ptr<CCubeFunction> function = std::make_shared<CCubeFunction>(stmt, environment, false);
+    gc.addRoot(function); // GC kökü olarak ekle (fonksiyonlar da GC tarafından yönetilebilir)
+    environment->define(stmt->name.lexeme, gc.createObject(function)); // Fonksiyonu ortamda tanımla
+}
+
+void Interpreter::visitIfStmt(std::shared_ptr<IfStmt> stmt) {
+    if (isTruthy(evaluate(stmt->condition))) {
+        execute(stmt->thenBranch);
+    } else if (stmt->elseBranch != nullptr) {
+        execute(stmt->elseBranch);
+    }
+}
+
+void Interpreter::visitImportStmt(std::shared_ptr<ImportStmt> stmt) {
+    // Modülü yükle
+    std::shared_ptr<CCubeModule> module = moduleLoader.loadModule(stmt->moduleName, *this);
+    if (!module) {
+        throw runtimeError(stmt->moduleName, "Modül '" + stmt->moduleName.lexeme + "' bulunamadı veya yüklenemedi.");
+    }
+    gc.addRoot(module); // Modülü GC kökü olarak ekle
+
+    std::string import_name = stmt->alias.empty() ? stmt->moduleName.lexeme : stmt->alias;
+    environment->define(import_name, gc.createObject(module));
+}
+
+void Interpreter::visitReturnStmt(std::shared_ptr<ReturnStmt> stmt) {
+    Value value = std::monostate{}; // Varsayılan dönüş değeri none
+    if (stmt->value != nullptr) {
+        value = evaluate(stmt->value);
+    }
+    // ReturnException'ı fırlatarak çağrı yığınından çık
+    throw ReturnException(value);
+}
+
+void Interpreter::visitVarStmt(std::shared_ptr<VarStmt> stmt) {
+    Value value = std::monostate{}; // Varsayılan değer none
+    if (stmt->initializer != nullptr) {
+        value = evaluate(stmt->initializer); // Başlangıç değeri varsa değerlendir
+    }
+    environment->define(stmt->name.lexeme, value); // Ortamda değişkeni tanımla
+}
+
+void Interpreter::visitWhileStmt(std::shared_ptr<WhileStmt> stmt) {
+    while (isTruthy(evaluate(stmt->condition))) {
+        execute(stmt->body);
+    }
+}
+
+void Interpreter::visitMatchStmt(std::shared_ptr<MatchStmt> stmt) {
+    Value subject_value = evaluate(stmt->subject); // Eşleştirilecek ifadeyi değerlendir
+
+    bool matched = false;
+    for (const auto& match_case : stmt->cases) {
+        if (match_case.pattern == nullptr) { // Bu bir 'default' durumu
+            if (!matched) { // Eğer daha önce hiçbir desen eşleşmediyse
+                execute(match_case.body);
+                matched = true;
+            }
+            break; // Default'tan sonra başka case olmaz
+        }
+
+        // Desen (pattern) değerlendir.
+        // Match desenleri özeldir ve burada runtime değerlendirme yapılır.
+        // Şimdilik sadece literal desenleri ve değişken desenlerini destekleyelim.
+        // Daha karmaşık desenler için bu kısım genişletilmelidir.
+
+        if (std::dynamic_pointer_cast<LiteralExpr>(match_case.pattern)) {
+            // Literal desen (örn: case 10:, case "hello":)
+            Value pattern_value = evaluate(match_case.pattern);
+            if (isEqual(subject_value, pattern_value)) {
+                execute(match_case.body);
+                matched = true;
+                break; // Eşleşme bulundu, döngüden çık
+            }
+        } else if (std::dynamic_pointer_cast<VariableExpr>(match_case.pattern)) {
+            // Değişken deseni (örn: case x:, x değişkenine subject_value atanır)
+            // Bu durumda, pattern'daki değişken, o case bloğu için yeni bir scope'ta tanımlanır.
+            // Bu, 'if' koşulu gibi özel bir durum içermiyorsa her zaman eşleşir.
+            // Match-case içindeki değişkenler için yeni bir scope oluşturulması gerekebilir.
+            // Şimdilik, eğer pattern bir VariableExpr ise, onu eşleştirme olarak kabul edip,
+            // bloğu kendi alt ortamında yürüteceğiz ve değişkeni orada tanımlayacağız.
+            Token var_name = std::dynamic_pointer_cast<VariableExpr>(match_case.pattern)->name;
+            std::shared_ptr<Environment> case_env = std::make_shared<Environment>(environment);
+            case_env->define(var_name.lexeme, subject_value); // Değişkeni case ortamında tanımla
+            executeBlock(std::static_pointer_cast<BlockStmt>(match_case.body)->statements, case_env); // Bloğu yeni ortamda yürüt
+            matched = true;
+            break;
+        }
+        // TODO: Daha karmaşık desen türlerini (liste desenleri, obje desenleri, koşullu desenler) burada işle
+        // Örneğin:
+        
+        else if (std::dynamic_pointer_cast<ListLiteralExpr>(match_case.pattern)) {
+            // Liste deseni: [x, y, z] gibi
+            // subject_value'nun bir liste olup olmadığını kontrol et ve desenle eşleşip eşleşmediğini kontrol et
+        }
+        
+    }
+}
+
+// Genel REPL çıktıları için (eğer interpret REPL'de tek ifade yürütüyorsa)
+void Interpreter::printValue(const Value& value) {
+    std::cout << valueToString(value) << std::endl;
 }
