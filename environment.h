@@ -7,11 +7,8 @@
 #include <stdexcept> // std::runtime_error için
 
 #include "token.h" // Token sınıfı için (hata raporlama ve isim almak için)
-#include "value.h" // Value sınıfı için (değişken değerleri)
+#include "value.h" // Value sınıfı için (değişken değerleri - ObjPtr içerir)
 #include "error_reporter.h" // RuntimeException için (Environment hataları)
-
-// RuntimeException'ı bu dosyada da kullanacağımız için tanımlaması olmalı.
-// error_reporter.h'den zaten geliyor, bu yüzden sadece include etmek yeterli.
 
 class Environment : public std::enable_shared_from_this<Environment> {
 private:
@@ -50,6 +47,10 @@ public:
 
     // Ortamın üst ortamını döndürür (eğer varsa)
     std::shared_ptr<Environment> getEnclosing() const;
+
+    // GC'nin bu ortamın içindeki ObjPtr'ları tarayabilmesi için
+    // Haritanın değiştirilemez bir referansını döndürür.
+    const std::unordered_map<std::string, Value>& getValues() const { return values; }
 
 private:
     // Belirtilen uzaklıktaki ortamı bulmaya yardımcı metod
