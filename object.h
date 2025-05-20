@@ -1,54 +1,52 @@
 #ifndef C_CUBE_OBJECT_H
 #define C_CUBE_OBJECT_H
 
-#include "value.h" // ValuePtr için
-#include "token.h" // Hata mesajları için Token
-#include <unordered_map> // Alanları saklamak için map
 #include <string>
 #include <memory> // std::shared_ptr için
-#include "gc.h"
 
-// İleri bildirim: Object sınıfı Class sınıfını referans alacak.
-// Dairesel bağımlılığı önlemek için Class sınıfının tam tanımına şimdilik ihtiyacımız yok.
-class C_CUBE_Class;
+// İleri bildirimler (circular dependency'den kaçınmak için)
+// Eğer ObjPtr içinde Object tanımı varsa, bu döngüsel bağımlılık oluşabilir.
+// Bu yüzden ObjPtr için bir typedef veya ayrı bir forward declaration kullanmak önemlidir.
+// ObjPtr'ı burada tanımlamayacağız, value.h'de tanımlayacağız.
 
-// C_CUBE_Class nesnesine akıllı işaretçi alias'ı (Class sınıfı tanımlandığında kullanılacak)
-using C_CUBE_ClassPtr = std::shared_ptr<C_CUBE_Class>;
-
-
-// Kullanıcı tanımlı C-CUBE sınıfının bir örneğini (instance) temsil eden sınıf
-class C_CUBE_Object : public GcObject {
-    // ...
-    void markChildren(GarbageCollector& gc) override { /* ... */ }
-};
-
-private:
-    // Bu nesnenin ait olduğu sınıfın referansı
-    C_CUBE_ClassPtr klass;
-
-    // Nesnenin alanlarını (properties) saklayan map
-    // Key: Alan adı (string), Value: Alan değeri (ValuePtr)
-    std::unordered_map<std::string, ValuePtr> fields;
-
+class Object {
 public:
-    // Constructor: Nesneyi oluştururken ait olduğu sınıfı alır.
-    C_CUBE_Object(C_CUBE_ClassPtr klass);
+    // GC tarafından yönetilen obje tipleri
+    enum class ObjectType {
+        FUNCTION,
+        CLASS,
+        INSTANCE,
+        LIST,
+        C_CUBE_MODULE,
+        BOUND_METHOD,
+        // Diğer obje tipleri buraya eklenebilir (örn. DICTIONARY, TUPLE vb.)
+    };
 
-    // Bir alanın değerini döndürür. Eğer alan yoksa, metodunu arar.
-    // Eğer ne alan ne de metot bulunursa runtime hatası verir.
-    // name: Erişilmek istenen alanın/metodun adı (Token).
-    ValuePtr get(const Token& name);
+    virtual ~Object() = default; // Sanal yıkıcı
 
-    // Bir alanın değerini ayarlar veya yeni bir alan ekler.
-    // name: Ayarlanacak alanın adı (Token).
-    // value: Alanın yeni değeri (ValuePtr).
-    void set(const Token& name, ValuePtr value);
+    // Her objenin tipini döndürmesi gerekir (GC ve runtime type checking için)
+    virtual ObjectType getType() const = 0;
 
-    // Nesnenin string temsilini döndürür (örneğin, "<instance of SınıfAdı>").
-    std::string toString() const;
+    // Her objenin string temsilini döndürmesi gerekir
+    virtual std::string toString() const = 0;
+
+    // GC için objenin yaklaşık bellek boyutunu döndürür.
+    // Bu, GC'nin eşiklerini yönetmesine yardımcı olur.
+    virtual size_t getSize() const = 0;
+
+    // Bu objenin çağrılabilir olup olmadığını kontrol eder (Callable arayüzünü uyguluyorsa true)
+    bool isCallable() const {
+        return getType() == ObjectType::FUNCTION ||
+               getType() == ObjectType::CLASS ||
+               getType() == ObjectType::BOUND_METHOD;
+    }
 };
 
-// C_CUBE_Object nesnesine akıllı işaretçi alias'ı
-using C_CUBE_ObjectPtr = std::shared_ptr<C_CUBE_Object>;
+// ObjPtr, C-CUBE objeleri için akıllı işaretçi.
+// Bu typedef, object.h veya value.h'de tanımlanabilir.
+// value.h'de tanımlanması, Value variant'ında kullanılacağı için daha mantıklı.
+// Buraya sadece forward declaration ekleyelim:
+ class Object; // Zaten tanımlı
+ using ObjPtr = std::shared_ptr<Object>; // Bu value.h'de olacak
 
 #endif // C_CUBE_OBJECT_H
