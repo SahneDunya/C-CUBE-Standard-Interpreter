@@ -1,61 +1,66 @@
 #include "bound_method.h"
 #include "interpreter.h" // Interpreter'ı kullanır
+#include "environment.h" // Ortam yönetimi için
 
 BoundMethod::BoundMethod(std::shared_ptr<CCubeInstance> instance, std::shared_ptr<CCubeFunction> function)
     : instance(instance), function(function) {}
 
 Value BoundMethod::call(Interpreter& interpreter, const std::vector<Value>& arguments) {
-    // Fonksiyonu çağırmadan önce 'this' anahtar kelimesi için geçici bir ortam oluştur
-    // Bu, CCubeFunction::call metodunun içinde de yapılabilir, ancak burada daha açık.
-    // Fonksiyonun closure ortamını genişleten yeni bir ortam oluştur.
-    std::shared_ptr<Environment> environment = std::make_shared<Environment>(function->getClosure());
-    environment->define("this", instance); // 'this'i mevcut instance'a bağla
-    // Çağrıyı orijinal fonksiyona devret
-    return function->call(interpreter, arguments); // Bu çağrıda yeni ortam kullanılacak mı?
-                                                 // function->call zaten kendi closure'ını yönetiyor.
-                                                 // BoundMethod'un amacı, çağrıya başlamadan önce 'this'i ayarlamaktır.
-                                                 // Aslında, 'this'i doğrudan Function::call metodunun Environment parametresine geçirmeliyiz.
-                                                 // Bu, Function::call'ın imzasını değiştirmeyi gerektirebilir.
-                                                 // Şu anki Function::call, Interpreter'ın geçerli ortamını kullanıyor.
-                                                 // Function::call'a 'this' için özel bir parametre eklemek daha temiz olur.
-
-    // Gelecekteki implementasyon notu: CCubeFunction::call metodu, BoundMethod tarafından geçirilen
-    // 'this' nesnesini alıp kendi ortamını oluştururken onu kullanmalıdır.
-    // Şimdiki haliyle, 'this'in ortamda bulunması gerekecek ki bu da current environment'ı değiştirmek anlamına gelir.
-    // Daha temiz bir çözüm: CCubeFunction::call(Interpreter& interpreter, const std::vector<Value>& arguments, Value this_obj = std::monostate{})
-    // ve BoundMethod bu this_obj'yi iletir.
-
-    // Geçici olarak, 'this'i Function::call'ın içinde işlemek için Interpreter'ın o anki ortamını manipüle etmesini varsayalım.
-    // Ancak bu iyi bir tasarım değildir ve özyinelemeli çağrılarda sorunlara yol açabilir.
-    // En iyi yol, CCubeFunction::call'ın bir "this" argümanı almasıdır.
-    // Bu yüzden bu kısım, CCubeFunction::call'ın dahili olarak nasıl çalıştığına bağlıdır.
-    // interpreter.executeBlock(function->declaration->body->statements, new_environment); // Bu şekilde çağırılmalı
-
-    // Interpreter'ın call mekanizmasında bu BoundMethod'un 'this'i nasıl enjekte ettiğine bakın.
-    // Aslında, 'call' metodunda instance'ı argüman olarak geçirmek yerine,
-    // doğrudan environment'a 'this'i ekleyip ardından fonksiyonu çağırmamız gerekiyor.
-    // Bu, BoundMethod'ın kendi Environment oluşturması gerektiği anlamına gelir.
-
-    // Yeniden düşünülmüş BoundMethod::call:
-    // Fonksiyonun closure'ını devralan yeni bir ortam oluştur
+    // Fonksiyonun closure'ından türeyen yeni bir ortam oluştur.
+    // Bu, 'this' değerinin yalnızca bu metodun yürütülmesi sırasında aktif olmasını sağlar
+    // ve fonksiyonun kendi kapsama zincirini korur.
     std::shared_ptr<Environment> method_environment = std::make_shared<Environment>(function->getClosure());
-    method_environment->define("this", ObjPtr(instance)); // 'this'i bu yeni ortama tanımla
 
-    // Argümanları fonksiyona ekle
-    for (size_t i = 0; i < arguments.size(); ++i) {
-        method_environment->define(function->declaration->params[i].lexeme, arguments[i]);
-    }
+    // 'this' anahtar kelimesini bu yeni ortama tanımla.
+    // 'instance' zaten bir ObjPtr olduğu için doğrudan atanabilir.
+    method_environment->define("this", instance);
 
-    // Fonksiyonun gövdesini bu yeni ortamda yürüt
-    try {
-        interpreter.executeBlock(function->declaration->body->statements, method_environment);
-    } catch (const ReturnException& result) {
-        if (function->isInitializer) return instance; // Kurucular her zaman 'this'i döndürür
-        return result.value;
-    }
+    // Argümanları yeni ortama tanımla.
+    // Bu kısım aslında fonksiyonun kendi çağrı mekanizmasında yapılmalı.
+    // CCubeFunction::call metodu argümanları zaten kendi yeni ortamına yerleştirecektir.
+    // Burada tekrar tanımlamak, CCubeFunction::call'ın içine bakmayı gerektirir.
+    // Daha temiz bir yaklaşım: BoundMethod, sadece 'this'i ayarlar ve sonra
+    // orijinal fonksiyonu çağırmak için Interpreter'ın uygun metodunu kullanır,
+    // Interpreter ise argümanları kendi ortamına yerleştirir.
 
-    if (function->isInitializer) return instance; // Kurucular her zaman 'this'i döndürür
-    return std::monostate{}; // Void fonksiyon dönüşü
+    // Ancak şu anki Interpreter tasarımında CCubeFunction::call,
+    // Interpreter'a ve argümanlara ihtiyaç duyar.
+    // CCubeFunction::call metodunu, 'this' için bir Environment alan bir şekilde
+    // veya özel bir 'this' değeri alan şekilde güncelleyebiliriz.
+
+    // Geçerli yaklaşım:
+    // CCubeFunction::call zaten yeni bir ortam oluşturur ve parametreleri o ortama yerleştirir.
+    // Bizim yapmamız gereken, bu ortamın 'this'i içermesini sağlamak.
+    // En temiz yol, CCubeFunction'ın call metodunun, bağlandığı 'this' objesini de
+    // parametre olarak alması ve bu 'this'i yeni ortamına eklemesidir.
+    // Ancak bu, CCubeFunction::call'ın imzasını değiştirir.
+
+    // Şu anki Interpreter yapısına en uygun yol:
+    // Interpreter'daki fonksiyon çağrısı mekanizmasında 'this'i handle etmek.
+    // BoundMethod, interpreter'a 'this'i içeren bir ortamla fonksiyonu çağırması talimatını vermeli.
+    // Bu da aslında Interpreter'ın `executeBlock` gibi metodlarını daha esnek hale getirmeyi gerektirir.
+
+    // Geriye dönüp Interpreter'a bakalım:
+    // Interpreter::visitCallExpr() -> callable->call(interpreter, arguments);
+    // Bu durumda callable'ın (yani BoundMethod'ın) kendi call metodu,
+    // Interpreter'dan aldığı instance'ı kullanarak bir ortam oluşturmalı.
+    // Yukarıdaki Environment oluşturma ve 'this'i tanımlama doğru.
+    // Şimdi fonksiyonu bu yeni ortamda çağırma kısmı:
+    // CCubeFunction'ın bir iç metodu olabilir: `callWithEnvironment(Interpreter&, Environment&, const std::vector<Value>&)`
+
+    // Daha basit bir çözüm, CCubeFunction::call'ın kendisine bir 'this' değeri parametresi eklemek:
+     virtual Value call(Interpreter& interpreter, const std::vector<Value>& arguments, Value this_value = std::monostate{}) override;
+    // Bu durumda, CCubeFunction::call kendi içinde `this_value`'yu Environment'a tanımlar.
+
+    // Şimdilik, BoundMethod'ın kendi içinde 'this'i tanımladığı ortamı oluşturup,
+    // fonksiyonun gövdesini bu ortamda yürüten Interpreter metodunu çağıralım:
+
+    // NOT: CCubeFunction::call metodunun imzası, fonksiyonun kendisi içinde
+    // bir Environment oluşturup argümanları ve 'this'i bu Environment'a atamasını sağlar.
+    // Dolayısıyla, BoundMethod'dan doğrudan bu yeni Environment'ı iletmek daha uygun olacaktır.
+
+    // CCubeFunction'ın çağrı mekanizmasını kullanmak için:
+    return function->callWithThis(interpreter, arguments, instance); // Yeni bir metod varsayalım
 }
 
 size_t BoundMethod::arity() const {
@@ -63,7 +68,7 @@ size_t BoundMethod::arity() const {
 }
 
 std::string BoundMethod::toString() const {
-    return "<bound method " + function->toString() + ">";
+    return "<bound method " + function->toString() + " of " + instance->toString() + ">";
 }
 
 // GC için boyut hesaplama
