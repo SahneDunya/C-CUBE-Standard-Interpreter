@@ -60,6 +60,7 @@ public:
     // GcObject'ten gelen sanal metotlar
     std::string toString() const override; // GcObject'te yoksa GcObject'e eklenir
     void markChildren() override; // GcObject'ten türeyen çocukları işaretler
+    void markChildren(GarbageCollector& gc) override { /* ... */ }
 };
 
 #endif // C_CUBE_MODULE_H
