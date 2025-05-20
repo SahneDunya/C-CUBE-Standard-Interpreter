@@ -1,66 +1,109 @@
-// c_cube_module.h
 #ifndef C_CUBE_MODULE_H
 #define C_CUBE_MODULE_H
 
 #include "gc.h"        // GcObject'ten türemek için
-#include "environment.h" // Ortam bilgisi için
-#include "ast.h"         // C-CUBE AST'si için (yalnızca .cube)
+#include "environment.h" // Modülün ortam bilgisi için (EnvironmentPtr için gerekli)
+#include "ast.h"         // C-CUBE (.cube) modüllerinin AST'si için (StmtPtr için gerekli)
+#include "value.h"       // ValuePtr için, eğer modül içinde ValuePtr'lar saklanıyorsa
+
 #include <string>
 #include <vector>
 #include <variant>       // Farklı modül içeriği için
+#include <memory>        // std::shared_ptr için
 
-// Python modülü için bir placeholder sınıfı
-// Gerçek implementasyon PyObject* tutmalı ve Python C API ile etkileşmeli
+// İleri bildirimler (eğer C_CUBE_Object/Function/Class ayrı dosyalarda ise)
+ class C_CUBE_Object;
+ class C_CUBE_Function;
+ class C_CUBE_Class;
+
+// --- Diğer Dil Modül Handle'ları ---
+// Bu sınıflar, C-CUBE'un dışındaki dillerden yüklenen modülleri temsil eder.
+// Gerçek implementasyonlar, ilgili dillerin C API'leri veya FFI kütüphaneleriyle entegre olur.
+
+// Python modülü için yer tutucu handle
+// Gerçek implementasyonda PyObject* gibi Python C API tipleri tutulabilir.
 class PythonModuleHandle {
 public:
     std::string filePath;
-    // PyObject* pyModule; // Gerçek Python modül objesi
+     PyObject* pyModule = nullptr; // Gerçek Python modül objesi buraya gelecek
+
     PythonModuleHandle(const std::string& path) : filePath(path) {}
     std::string toString() const { return "<Python module: " + filePath + ">"; }
+     PyObject* getPyModule() const { return pyModule; } // Getter eklenebilir
 };
 
-// Native (C/C++/Shader) modülü için bir placeholder sınıfı
-// Gerçek implementasyon FFI veya GPU API etkileşimi için gerekli verileri tutmalı
+// Native (C/C++/Shader) modülü için yer tutucu handle
+// Bu tür dosyalar doğrudan yorumlanamaz, genellikle FFI veya özel derleme/yükleme mekanizmaları ile kullanılır.
 class NativeModuleHandle {
 public:
     std::string filePath;
-    // void* native_handle; // Derlenmiş kütüphane veya shader programı handle'ı
+     void* nativeHandle = nullptr; // Derlenmiş kütüphane veya shader programı handle'ı
+
     NativeModuleHandle(const std::string& path) : filePath(path) {}
     std::string toString() const { return "<Native module: " + filePath + ">"; }
+     void* getNativeHandle() const { return nativeHandle; } // Getter eklenebilir
 };
 
-// C_CUBE_Module, farklı dillerden yüklenen modülleri temsil eder
+// Fortran modülü için yer tutucu handle
+class FortranModuleHandle {
+public:
+    std::string filePath;
+    FortranModuleHandle(const std::string& path) : filePath(path) {}
+    std::string toString() const { return "<Fortran module: " + filePath + ">"; }
+};
+
+// Julia modülü için yer tutucu handle
+class JuliaModuleHandle {
+public:
+    std::string filePath;
+    JuliaModuleHandle(const std::string& path) : filePath(path) {}
+    std::string toString() const { return "<Julia module: " + filePath + ">"; }
+};
+
+
+// --- C_CUBE_Module: Modülün Kendisi (GcObject) ---
+// C-CUBE dilinde 'import' ifadesiyle yüklenen bir modülü temsil eder.
+// GcObject'ten türediği için çöp toplayıcı tarafından yönetilir.
 class C_CUBE_Module : public GcObject {
 public:
     std::string name; // Modülün adı (örn. "math", "game.utils")
 
-    // Modülün içeriğini tutmak için variant
+    // Modülün gerçek içeriğini tutan variant.
+    // Her farklı dil için uygun handle veya doğrudan AST/Environment tutulur.
     std::variant<
-        std::monostate, // Henüz yüklenmemiş veya bilinmeyen tip
-        std::vector<StmtPtr>, // C-CUBE (.cube) modüllerinin AST'si
-        std::shared_ptr<Environment>, // C-CUBE (.cube) modüllerinin kendi ortamı (globals)
-                                     // (AST ve Environment birlikte tutulabilir)
-        PythonModuleHandle, // Python (.py) modülü
-        NativeModuleHandle  // C/C++/Shader (.h, .cuh, .glsl, vb.) modülü
-        // ... Diğer dil modülleri için buraya ekle
+        std::monostate,             // Boş veya bilinmeyen tip (varsayılan)
+        std::pair<std::vector<StmtPtr>, EnvironmentPtr>, // C-CUBE (.cube) modüllerinin AST ve Ortamı
+        PythonModuleHandle,         // Python (.py) modülü
+        NativeModuleHandle,         // C/C++/Shader (.h, .cuh, .glsl, .hlsl, .metal, .spv) modülü
+        FortranModuleHandle,        // Fortran (.mod) modülü
+        JuliaModuleHandle           // Julia (.jl) modülü
+        // Diğer dil modülleri buraya eklenebilir
     > content;
 
-    // Constructor for .cube modules
+    // --- Constructor'lar ---
+    // C-CUBE (.cube) modülleri için constructor
     C_CUBE_Module(const std::string& name, std::vector<StmtPtr> ast, EnvironmentPtr env)
-        : name(name), content(std::make_pair(ast, env)) {} // pair olarak tutmak AST ve Env için uygun
+        : name(name), content(std::make_pair(std::move(ast), env)) {}
 
-    // Constructor for Python modules
+    // Python modülleri için constructor
     C_CUBE_Module(const std::string& name, PythonModuleHandle pyHandle)
-        : name(name), content(pyHandle) {}
+        : name(name), content(std::move(pyHandle)) {}
 
-    // Constructor for Native modules
+    // Native (C/C++/Shader) modülleri için constructor
     C_CUBE_Module(const std::string& name, NativeModuleHandle nativeHandle)
-        : name(name), content(nativeHandle) {}
+        : name(name), content(std::move(nativeHandle)) {}
 
-    // GcObject'ten gelen sanal metotlar
-    std::string toString() const override; // GcObject'te yoksa GcObject'e eklenir
-    void markChildren() override; // GcObject'ten türeyen çocukları işaretler
-    void markChildren(GarbageCollector& gc) override { /* ... */ }
+    // Fortran modülleri için constructor
+    C_CUBE_Module(const std::string& name, FortranModuleHandle fortranHandle)
+        : name(name), content(std::move(fortranHandle)) {}
+
+    // Julia modülleri için constructor
+    C_CUBE_Module(const std::string& name, JuliaModuleHandle juliaHandle)
+        : name(name), content(std::move(juliaHandle)) {}
+
+    // GcObject arayüzü: Modülün çocuklarını (başka GcObject'lere referansları) işaretler.
+    std::string toString() const override; // GcObject'ten türediği için gerekli
+    void markChildren(GarbageCollector& gc) override; // GcObject'ten türediği için gerekli
 };
 
 #endif // C_CUBE_MODULE_H
