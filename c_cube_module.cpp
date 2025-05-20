@@ -41,3 +41,42 @@ ValuePtr C_CUBE_Module::get(const Token& name) {
      Interpreter::hadRuntimeError = true;
     return nullptr; // Hata durumunda
 }
+
+std::string C_CUBE_Module::toString() const {
+    // std::visit kullanarak farklı content türlerine göre string döndür
+    return std::visit([this](auto&& arg) -> std::string {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, std::monostate>) {
+            return "<Module " + name + " (empty)>";
+        } else if constexpr (std::is_same_v<T, std::pair<std::vector<StmtPtr>, EnvironmentPtr>>) {
+            return "<C-CUBE Module " + name + ">";
+        } else if constexpr (std::is_same_v<T, PythonModuleHandle>) {
+            return arg.toString(); // PythonModuleHandle'ın kendi toString'ini çağır
+        } else if constexpr (std::is_same_v<T, NativeModuleHandle>) {
+            return arg.toString(); // NativeModuleHandle'ın kendi toString'ini çağır
+        }
+        return "<Unknown Module Type for " + name + ">";
+    }, content);
+}
+
+void C_CUBE_Module::markChildren() {
+    // Modülün içerdiği GcObject'leri işaretle
+    std::visit([this](auto&& arg) {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, std::pair<std::vector<StmtPtr>, EnvironmentPtr>>) {
+            // C-CUBE modülü: Ortamını ve AST'sini işaretle
+            // Ortamın kendisi GcObject ise (environment.h'da GcObject'ten türemişse)
+            if (arg.second) {
+                arg.second->markChildren(); // Ortam içindeki GcObject'leri işaretle
+            }
+            // AST'deki GcObject'leri işaretle (eğer AST düğümleri GcObject'ler tutuyorsa)
+            // Bunu Interpreter'ın kendisi yürütürken yapabilir
+            // Veya her StmtPtr içinde GcObject'lere referans tutan bir yapı varsa, o da işaretlenmeli
+        }
+        // PythonModuleHandle, NativeModuleHandle gibi sınıflar kendi içlerinde
+        // GcObject'lere referans tutmuyorsa (örn. sadece raw pointer veya FFI handle'larıysa),
+        // bu durumda markChildren'a ek bir şey gerekmez.
+        // Eğer bu handle'lar GcObject'leri sarmalıyorsa (örn. bir Python objesini temsil eden C_CUBE_Object),
+        // o zaman onlar da işaretlenmelidir.
+    }, content);
+}
