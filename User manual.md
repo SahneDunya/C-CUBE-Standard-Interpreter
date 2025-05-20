@@ -39,7 +39,7 @@ player1.takeDamage(20);
 player1.collectCoin();
 ```
 Simple and Understandable Syntax
-C-CUBE's syntax will feel quite familiar to developers accustomed to C-like languages (such as C++, Java, or JavaScript). Code blocks are delimited by curly braces {}, and statements are terminated with semicolons ;. This lowers the learning curve and simplifies integration with existing C++ or C# based game engines.
+C-CUBE's syntax will feel quite familiar to developers accustomed to C//C++ like languages (such as C++, Java, or JavaScript). Code blocks are delimited by curly braces {}, and statements are terminated with semicolons ;. This lowers the learning curve and simplifies integration with existing C++ or C# based game engines.
 
 Memory Management: Generational Garbage Collection
 C-CUBE comes with a Generational Garbage Collection (GGC) system, lifting the burden of manual memory management from your shoulders. This advanced memory management system automatically tracks the lifespan of dynamically created objects and cleans up those no longer in use, ensuring your games run smoothly. GGC categorizes objects into "young" and "old" generations, allowing short-lived in-game objects (like bullets, effects) to be quickly reclaimed, while ensuring long-lived objects (like player data, level assets) are scanned less frequently. This reduces performance bottlenecks and allows developers to focus on game logic rather than memory leaks.
