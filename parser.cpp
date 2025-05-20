@@ -1,631 +1,499 @@
 #include "parser.h"
-#include "token.h"
-#include "ast.h" // AST düğüm yapılarını içerir
-#include <iostream>
-#include <vector>
-#include <memory>
-#include <stdexcept> // Parsing hataları için
+#include <iostream>   // Debugging için
+#include <stdexcept>  // std::runtime_error için
 
-// Hata işleme: Basit bir Struct veya Class tanımlayabiliriz.
-// Ya da şimdilik sadece konsola yazdırıp bir flag set edebiliriz.
-// Hataları exception ile fırlatmak parsing mantığını daha temiz tutar.
+// Constructor
+Parser::Parser(const std::vector<Token>& tokens, ErrorReporter& reporter)
+    : tokens(tokens), errorReporter(reporter) {}
 
-struct ParseError : public std::runtime_error {
-    Token token;
-    ParseError(const Token& token, const std::string& message)
-        : std::runtime_error(message), token(token) {}
-};
-
-// Hata raporlama fonksiyonu (main.cpp'de olmalı veya ayrı bir modül)
- extern bool hadError; // Global hata flag'i (basitlik için)
- void error(const Token& token, const std::string& message); // Hata raporlama fonksiyonu
-
-// Parser sınıfı implementasyonu
-
-std::vector<StmtPtr> Parser::parse() {
-    std::vector<StmtPtr> statements;
-    while (!isAtEnd()) {
-        // Her döngüde bir üst seviye bildirimi veya deyimi ayrıştırmayı dene
-        // Hata durumunda senkronize ol
-        try {
-            statements.push_back(declaration());
-        } catch (const ParseError& error) {
-            // Hata raporla
-             std::cerr << "[Line " << error.token.line << "] Error at '" << error.token.lexeme << "': " << error.what() << std::endl;
-             hadError = true; // Global hatayı işaretle
-            synchronize(); // Hata kurtarma
-        }
-    }
-    return statements;
+// Token akışının sonuna ulaşıldı mı?
+bool Parser::isAtEnd() const {
+    return peek().type == TokenType::EOF_TOKEN;
 }
 
-// Gramer Kurallarına Karşılık Gelen Ayrıştırma Metodları (En üstten başlayarak)
-
-// declaration -> classDecl | funDecl | varDecl | statement
-StmtPtr Parser::declaration() {
-    // İlk token'a bakarak ne tür bir bildirim olduğunu anlamaya çalış
-    // Sınıf, fonksiyon, değişken gibi özel anahtar kelimeleri kontrol et
-    if (match(TokenType::CLASS)) return classDecl();
-    if (match(TokenType::FUN)) return funDecl("function"); // Fonksiyonlar için
-
-    // 'var' anahtar kelimesi değişken bildirimi için
-    if (match(TokenType::VAR)) return varDecl();
-
-    // Hiçbiri değilse, bir deyimdir
-    return statement();
-}
-
-// classDecl -> "class" IDENTIFIER ( "<" IDENTIFIER )? "{" funDecl* "}"
-StmtPtr Parser::classDecl() {
-    // 'class' zaten tüketildi
-    Token name = consume(TokenType::IDENTIFIER, "Expect class name after 'class'.");
-
-    // Miras alıyor mu? (< SuperClass)
-    ExprPtr superclass = nullptr; // Şimdilik miras yok
-    if (match(TokenType::LESS)) {
-        consume(TokenType::IDENTIFIER, "Expect superclass name after '<'.");
-         superclass = std::make_shared<VariableExpr>(previous()); // Üst sınıf adını bir VariableExpr olarak sakla
-        std::cerr << "Warning: Class inheritance parsing not fully implemented." << std::endl;
-    }
-
-
-    consume(TokenType::LEFT_BRACE, "Expect '{' before class body.");
-
-    // Metotları ayrıştır
-    std::vector<StmtPtr> methods;
-    while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
-        methods.push_back(funDecl("method")); // Metotlar için funDecl çağır
-    }
-
-    consume(TokenType::RIGHT_BRACE, "Expect '}' after class body.");
-
-     return std::make_shared<ClassDeclStmt>(name, superclass, methods);
-     std::cerr << "Warning: Class declaration parsing not fully implemented." << std::endl;
-    return nullptr; // Yer tutucu
-}
-
-// funDecl -> "fun" IDENTIFIER "(" parameters? ")" block
-// parameters -> IDENTIFIER ( "," IDENTIFIER )*
-StmtPtr Parser::funDecl(const std::string& kind) {
-    // 'fun' zaten tüketildi
-    Token name = consume(TokenType::IDENTIFIER, "Expect " + kind + " name after 'fun'.");
-    consume(TokenType::LEFT_PAREN, "Expect '(' after " + kind + " name.");
-
-    // Parametreleri ayrıştır
-    std::vector<Token> parameters;
-    if (!check(TokenType::RIGHT_PAREN)) {
-        do {
-            // Maksimum parametre sayısını kontrol et
-             if (parameters.size() >= 255) { // Örnek limit
-                error(peek(), "Can't have more than 255 parameters.");
-             }
-            parameters.push_back(consume(TokenType::IDENTIFIER, "Expect parameter name."));
-        } while (match(TokenType::COMMA));
-    }
-
-    consume(TokenType::RIGHT_PAREN, "Expect ')' after parameters.");
-    consume(TokenType::LEFT_BRACE, "Expect '{' before " + kind + " body.");
-
-    // Fonksiyon/metot gövdesini (blok) ayrıştır
-    StmtPtr body = block();
-
-     return std::make_shared<FunDeclStmt>(name, parameters, body);
-     std::cerr << "Warning: Function declaration parsing not fully implemented." << std::endl;
-    return nullptr; // Yer tutucu
-}
-
-
-// varDecl -> "var" IDENTIFIER ( "=" expression )? ";"
-StmtPtr Parser::varDecl() {
-    // 'var' zaten tüketildi
-    Token name = consume(TokenType::IDENTIFIER, "Expect variable name after 'var'.");
-
-    // Başlangıç değeri var mı?
-    ExprPtr initializer = nullptr;
-    if (match(TokenType::EQUAL)) {
-        initializer = expression(); // Başlangıç değerini ayrıştır
-    }
-
-    // Deyim sonlandırıcı (Noktalı virgül veya Python-like newline/indentasyon)
-    // Python-like newline/indentasyon için gramer yapısı daha farklı olurdu.
-    // Şimdilik C-like noktalı virgül varsayalım veya newline'ı opsiyonel yapalım.
-    // Basitlik için noktalı virgül zorunlu tutalım.
-    consume(TokenType::SEMICOLON, "Expect ';' after variable declaration.");
-
-    return std::make_shared<VarDeclStmt>(name, initializer);
-}
-
-
-// statement -> exprStmt | forStmt | ifStmt | printStmt | returnStmt | whileStmt | block | importStmt | matchStmt
-StmtPtr Parser::statement() {
-    if (match(TokenType::PRINT)) return printStmt();
-     if (match(TokenType::FOR)) return forStmt(); // forStmt daha sonra
-    if (match(TokenType::IF)) return ifStmt();
-    if (match(TokenType::RETURN)) return returnStmt();
-    if (match(TokenType::WHILE)) return whileStmt();
-    if (match(TokenType::LEFT_BRACE)) return block(); // Blok deyimi
-    if (match(TokenType::IMPORT)) return importStmt(); // import deyimi
-    if (match(TokenType::MATCH)) return matchStmt(); // match deyimi
-
-    // Hiçbiri değilse, bir ifade deyimidir (sonunda noktalı virgül olan ifade)
-    return expressionStmt();
-}
-
-// printStmt -> "print" expression ";"
-StmtPtr Parser::printStmt() {
-    // 'print' zaten tüketildi
-    ExprPtr value = expression(); // Yazdırılacak ifadeyi ayrıştır
-    consume(TokenType::SEMICOLON, "Expect ';' after value.");
-    return std::make_shared<PrintStmt>(value);
-}
-
-// returnStmt -> "return" expression? ";"
-StmtPtr Parser::returnStmt() {
-     // 'return' zaten tüketildi
-     Token keyword = previous(); // 'return' token'ını sakla
-
-     ExprPtr value = nullptr; // Döndürülen değer (opsiyonel)
-     // Eğer bir sonraki token ';' değilse, bir ifadeyi ayrıştır
-     if (!check(TokenType::SEMICOLON)) {
-         value = expression();
-     }
-
-     consume(TokenType::SEMICOLON, "Expect ';' after return value.");
-      return std::make_shared<ReturnStmt>(keyword, value);
-      std::cerr << "Warning: Return statement parsing not fully implemented." << std::endl;
-     return nullptr; // Yer tutucu
-}
-
-// block -> "{" declaration* "}"
-StmtPtr Parser::block() {
-    // '{' zaten tüketildi
-    std::vector<StmtPtr> statements;
-
-    // '}' veya dosya sonuna kadar bildirimleri/deyimleri ayrıştır
-    while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
-        statements.push_back(declaration());
-    }
-
-    consume(TokenType::RIGHT_BRACE, "Expect '}' after block.");
-
-    return std::make_shared<BlockStmt>(statements);
-}
-
-// ifStmt -> "if" "(" expression ")" statement ("else" statement)?
-StmtPtr Parser::ifStmt() {
-    // 'if' zaten tüketildi
-    consume(TokenType::LEFT_PAREN, "Expect '(' after 'if'.");
-    ExprPtr condition = expression(); // Koşul ifadesini ayrıştır
-    consume(TokenType::RIGHT_PAREN, "Expect ')' after if condition.");
-
-    StmtPtr thenBranch = statement(); // 'if' bloğunu ayrıştır
-
-    // 'else' var mı?
-    StmtPtr elseBranch = nullptr;
-    if (match(TokenType::ELSE)) {
-        elseBranch = statement(); // 'else' bloğunu ayrıştır
-    }
-
-    return std::make_shared<IfStmt>(condition, thenBranch, elseBranch);
-}
-
-// whileStmt -> "while" "(" expression ")" statement
-StmtPtr Parser::whileStmt() {
-    // 'while' zaten tüketildi
-    consume(TokenType::LEFT_PAREN, "Expect '(' after 'while'.");
-    ExprPtr condition = expression(); // Koşul ifadesini ayrıştır
-    consume(TokenType::RIGHT_PAREN, "Expect ')' after while condition.");
-
-    StmtPtr body = statement(); // Döngü gövdesini ayrıştır
-
-    return std::make_shared<WhileStmt>(condition, body);
-}
-
-// importStmt -> "import" IDENTIFIER ( "." IDENTIFIER )* ( "as" IDENTIFIER )? ("," IDENTIFIER ( "." IDENTIFIER )* ( "as" IDENTIFIER )?)* ";"
-StmtPtr Parser::importStmt() {
-    // 'import' zaten tüketildi
-    // Import yolu ve isteğe bağlı 'as' kısmını ayrıştır
-     std::cerr << "Warning: Import statement parsing not fully implemented." << std::endl;
-    // Örnek basitleştirilmiş import: import module_name;
-     Token moduleName = consume(TokenType::IDENTIFIER, "Expect module name after 'import'.");
-     consume(TokenType::SEMICOLON, "Expect ';' after import statement.");
-     return std::make_shared<ImportStmt>(moduleName.lexeme); // Sadece ismi sakla
-    // Daha karmaşık importlar (modül.altmodul, as ile isim değiştirme) daha detaylı ayrıştırma gerektirir
-     while (!check(TokenType::SEMICOLON) && !isAtEnd()) {
-         advance(); // Şimdilik tokenları atla
-     }
-     consume(TokenType::SEMICOLON, "Expect ';' after import statement."); // Terminator'ı tüket
-     return nullptr; // Yer tutucu
-}
-
-// matchStmt -> "match" expression "{" case* "}"
-// case -> "case" pattern ":" statement
-StmtPtr Parser::matchStmt() {
-     // 'match' zaten tüketildi
-     ExprPtr subject = expression(); // Eşleşme yapılacak ifadeyi ayrıştır
-     consume(TokenType::LEFT_BRACE, "Expect '{' after match expression.");
-
-     std::vector<MatchCase> cases; // AST'nizde MatchCase yapısı olmalı (pattern ve body içerir)
-
-     // '}' veya dosya sonuna kadar case'leri ayrıştır
-     while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
-         consume(TokenType::CASE, "Expect 'case' keyword inside match statement.");
-         // Pattern ayrıştırma (Bu kısım dilinize göre değişir, basit bir örnek)
-         ExprPtr pattern = expression(); // Şimdilik pattern'ın basit bir ifade olduğunu varsayalım
-         consume(TokenType::COLON, "Expect ':' after match case pattern.");
-         StmtPtr body = statement(); // Case gövdesini ayrıştır
-
-          cases.push_back({pattern, body}); // MatchCase yapısına ekle
-         std::cerr << "Warning: Match case pattern parsing is simplified." << std::endl; // Desen ayrıştırması daha karmaşık olabilir
-     }
-
-     consume(TokenType::RIGHT_BRACE, "Expect '}' after match body.");
-
-      return std::make_shared<MatchStmt>(subject, cases);
-      std::cerr << "Warning: Match statement parsing not fully implemented." << std::endl;
-     return nullptr; // Yer tutucu
-}
-
-
-// expressionStmt -> expression ";"
-StmtPtr Parser::expressionStmt() {
-    ExprPtr expr = expression(); // İfadeyi ayrıştır
-     consume(TokenType::SEMICOLON, "Expect ';' after expression."); // Eğer noktalı virgül zorunluysa
-    // Python-like: Newline veya dosya sonu da olabilir. Basitlik için noktalı virgül.
-     if (!match(TokenType::SEMICOLON)) {
-         // Hata veya Python-like newline kontrolü eklenebilir
-          std::cerr << "[Line " << peek().line << "] Warning: Missing ';' after expression statement (assuming Python-like newline termination)." << std::endl;
-          // Eğer Python-like newline terminate ise, buraya konsolide etmeyiz,
-          // statement() metodunda expression() çağrılır ve sonraki token'a bakılır.
-          // Şu anki setup C-like ';' bekliyor gibi görünüyor. Eğer newline terminate ise,
-          consume(TokenType::SEMICOLON) kaldırılmalı ve parser bu durumda devam etmeli.
-     }
-
-    return std::make_shared<ExpressionStmt>(expr);
-}
-
-// İfade Ayrıştırma Metodları (En düşük öncelikten başlayarak)
-
-// expression -> assignment
-ExprPtr Parser::expression() {
-    return assignment();
-}
-
-// assignment -> (call | variable | get | set) "=" assignment | logic_or
-ExprPtr Parser::assignment() {
-    ExprPtr expr = logic_or(); // Sağ tarafın en düşük öncelikli ifadesini ayrıştır
-
-    // Eğer bir sonraki token '=' ise, bu bir atama ifadesidir
-    if (match(TokenType::EQUAL)) {
-        Token equals = previous(); // '=' token'ını sakla
-        ExprPtr value = assignment(); // Sağ tarafı ayrıştır (atama sağdan birleşiktir)
-
-        // Sol tarafın geçerli bir atama hedefi olup olmadığını kontrol et
-        // Geçerli hedefler: değişkenler (VariableExpr), obje üyeleri (GetExpr)
-        if (auto var_expr = std::dynamic_pointer_cast<VariableExpr>(expr)) {
-            // Değişken ataması
-            Token name = var_expr->name; // Değişkenin adını al
-            return std::make_shared<AssignExpr>(name, value);
-        }
-        // Obje üyelerine atama (SetExpr) buraya eklenecek
-         if (auto get_expr = std::dynamic_pointer_cast<GetExpr>(expr)) { ... }
-
-
-        // Geçerli bir atama hedefi değilse hata ver
-         error(equals, "Invalid assignment target.");
-         std::cerr << "[Line " << equals.line << "] Error: Invalid assignment target." << std::endl;
-        // Hata durumunda value'yu döndürmek veya nullptr dönmek stratejinize bağlı
-        return nullptr; // Hata durumunda null
-    }
-
-    // '=' yoksa, sadece logic_or ifadesidir
-    return expr;
-}
-
-// logic_or -> logic_and ("or" logic_and)*
-ExprPtr Parser::logic_or() {
-    ExprPtr expr = logic_and(); // Sol operandı ayrıştır
-
-    // 'or' token'ları olduğu sürece devam et
-    while (match(TokenType::OR)) {
-        Token op = previous(); // 'or' token'ını sakla
-        ExprPtr right = logic_and(); // Sağ operandı ayrıştır
-        expr = std::make_shared<LogicalExpr>(expr, op, right); // Yeni bir LogicalExpr düğümü oluştur
-    }
-
-    return expr;
-}
-
-// logic_and -> equality ("and" equality)*
-ExprPtr Parser::logic_and() {
-    ExprPtr expr = equality(); // Sol operandı ayrıştır
-
-    // 'and' token'ları olduğu sürece devam et
-    while (match(TokenType::AND)) {
-        Token op = previous(); // 'and' token'ını sakla
-        ExprPtr right = equality(); // Sağ operandı ayrıştır
-        expr = std::make_shared<LogicalExpr>(expr, op, right); // Yeni bir LogicalExpr düğümü oluştur
-    }
-
-    return expr;
-}
-
-
-// equality -> comparison (("==" | "!=") comparison)*
-ExprPtr Parser::equality() {
-    ExprPtr expr = comparison(); // Sol operandı ayrıştır
-
-    // '==' veya '!=' token'ları olduğu sürece devam et
-    while (match(TokenType::EQUAL_EQUAL, TokenType::BANG_EQUAL)) {
-        Token op = previous(); // Operatör token'ını sakla
-        ExprPtr right = comparison(); // Sağ operandı ayrıştır
-        expr = std::make_shared<BinaryExpr>(expr, op, right); // Yeni bir BinaryExpr düğümü oluştur
-    }
-
-    return expr;
-}
-
-// comparison -> term ((">" | ">=" | "<" | "<=") term)*
-ExprPtr Parser::comparison() {
-    ExprPtr expr = term(); // Sol operandı ayrıştır
-
-    // Karşılaştırma operatörleri olduğu sürece devam et
-    while (match(TokenType::GREATER, TokenType::GREATER_EQUAL, TokenType::LESS, TokenType::LESS_EQUAL)) {
-        Token op = previous(); // Operatör token'ını sakla
-        ExprPtr right = term(); // Sağ operandı ayrıştır
-        expr = std::make_shared<BinaryExpr>(expr, op, right); // Yeni bir BinaryExpr düğümü oluştur
-    }
-
-    return expr;
-}
-
-// term -> factor (("+" | "-") factor)*
-ExprPtr Parser::term() {
-    ExprPtr expr = factor(); // Sol operandı ayrıştır
-
-    // '+' veya '-' operatörleri olduğu sürece devam et
-    while (match(TokenType::PLUS, TokenType::MINUS)) {
-        Token op = previous(); // Operatör token'ını sakla
-        ExprPtr right = factor(); // Sağ operandı ayrıştır
-        expr = std::make_shared<BinaryExpr>(expr, op, right); // Yeni bir BinaryExpr düğümü oluştur
-    }
-
-    return expr;
-}
-
-// factor -> unary (("*" | "/") unary)*
-ExprPtr Parser::factor() {
-    ExprPtr expr = unary(); // Sol operandı ayrıştır
-
-    // '*' veya '/' operatörleri olduğu sürece devam et
-    while (match(TokenType::STAR, TokenType::SLASH)) {
-        Token op = previous(); // Operatör token'ını sakla
-        ExprPtr right = unary(); // Sağ operandı ayrıştır
-        expr = std::make_shared<BinaryExpr>(expr, op, right); // Yeni bir BinaryExpr düğümü oluştur
-    }
-
-    return expr;
-}
-
-// unary -> ("!" | "-") unary | call
-ExprPtr Parser::unary() {
-    // Unary operatör var mı?
-    if (match(TokenType::BANG, TokenType::MINUS)) {
-        Token op = previous(); // Operatör token'ını sakla
-        ExprPtr right = unary(); // Sağ operandı ayrıştır (unary sağdan birleşiktir)
-        return std::make_shared<UnaryExpr>(op, right); // Yeni bir UnaryExpr düğümü oluştur
-    }
-
-    // Unary operatör yoksa, bir çağrı ifadesidir
-    return call();
-}
-
-// call -> primary ("(" arguments? ")" | "." IDENTIFIER)*
-// arguments -> expression ("," expression)*
-ExprPtr Parser::call() {
-    ExprPtr expr = primary(); // Çağrının sol tarafını (fonksiyon, obje vb.) ayrıştır
-
-    // Parantez '(' veya nokta '.' olduğu sürece devam et (çağrı veya özellik erişimi)
-    while (true) {
-        if (match(TokenType::LEFT_PAREN)) {
-            // Fonksiyon veya metot çağrısı
-            expr = finishCall(expr); // Argümanları ayrıştır ve CallExpr oluştur
-        } else if (match(TokenType::DOT)) {
-            // Obje özelliği erişimi
-            Token name = consume(TokenType::IDENTIFIER, "Expect property name after '.'.");
-             expr = std::make_shared<GetExpr>(expr, name); // GetExpr düğümü oluştur
-             std::cerr << "Warning: Property access parsing not fully implemented." << std::endl;
-             return nullptr; // Yer tutucu, geliştirilmeli
-        }
-        // Başka zincirleme operatörler (örn: [indeks]) buraya eklenebilir
-        else {
-            break; // Parantez veya nokta yoksa döngüden çık
-        }
-    }
-
-    return expr;
-}
-
-// finishCall metodu (call metoduna yardımcı)
-ExprPtr Parser::finishCall(ExprPtr callee) {
-    // '(' zaten tüketildi
-    std::vector<ExprPtr> arguments;
-    // Kapanış parantezi ')' değilse ve dosya sonu değilse argümanları ayrıştır
-    if (!check(TokenType::RIGHT_PAREN)) {
-        do {
-            // Maksimum argüman sayısını kontrol et
-             if (arguments.size() >= 255) { // Örnek limit
-                error(peek(), "Can't have more than 255 arguments.");
-             }
-            arguments.push_back(expression()); // Argümanı ayrıştır
-        } while (match(TokenType::COMMA)); // Virgül varsa bir argüman daha var
-    }
-
-    Token paren = consume(TokenType::RIGHT_PAREN, "Expect ')' after arguments.");
-
-     return std::make_shared<CallExpr>(callee, paren, arguments);
-     std::cerr << "Warning: Call expression parsing not fully implemented." << std::endl;
-    return nullptr; // Yer tutucu
-}
-
-
-// primary -> "true" | "false" | "none" | NUMBER | STRING | "(" expression ")" | IDENTIFIER | "this" | "super" ( "." IDENTIFIER | "(" arguments? ")" ) | "match" expression "{" case* "}" (eğer match ifade ise)
-ExprPtr Parser::primary() {
-    // Literal değerler
-    if (match(TokenType::FALSE)) return std::make_shared<LiteralExpr>(previous()); // 'false' token'ını içerir
-    if (match(TokenType::TRUE)) return std::make_shared<LiteralExpr>(previous());  // 'true' token'ını içerir
-    if (match(TokenType::NONE)) return std::make_shared<LiteralExpr>(previous());  // 'none' token'ını içerir
-    if (match(TokenType::NUMBER)) return std::make_shared<LiteralExpr>(previous()); // Sayı token'ını içerir
-    if (match(TokenType::STRING)) return std::make_shared<LiteralExpr>(previous()); // String token'ını içerir
-
-    // Parantez içindeki ifade
-    if (match(TokenType::LEFT_PAREN)) {
-        ExprPtr expr = expression(); // Parantez içindeki ifadeyi ayrıştır
-        consume(TokenType::RIGHT_PAREN, "Expect ')' after expression.");
-        return std::make_shared<GroupingExpr>(expr); // GroupingExpr düğümü oluştur
-    }
-
-    // Tanımlayıcı (değişken)
-    if (match(TokenType::IDENTIFIER)) {
-        return std::make_shared<VariableExpr>(previous()); // Değişken token'ını içerir
-    }
-
-    // 'this' anahtar kelimesi
-    if (match(TokenType::THIS)) {
-         return std::make_shared<ThisExpr>(previous());
-         std::cerr << "Warning: 'this' parsing not fully implemented." << std::endl;
-         return nullptr; // Yer tutucu
-    }
-
-    // 'super' anahtar kelimesi (şimdilik metot çağrısı veya özellik erişimi beklenir)
-    if (match(TokenType::SUPER)) {
-          Token keyword = previous();
-         consume(TokenType::DOT, "Expect '.' after 'super'.");
-         Token method = consume(TokenType::IDENTIFIER, "Expect superclass method name.");
-         return std::make_shared<SuperExpr>(keyword, method);
-         std::cerr << "Warning: 'super' parsing not fully implemented." << std::endl;
-         return nullptr; // Yer tutucu
-    }
-
-    // Match ifadesi (eğer expression olarak da kullanılabiliyorsa)
-    if (match(TokenType::MATCH)) {
-         // Bu, matchStmt'deki mantığa benzer olur, ama MatchExpr düğümü döndürür.
-         std::cerr << "Warning: Match expression parsing not fully implemented." << std::endl;
-         // Implementasyonu matchStmt'ye benzer olacaktır.
-         return nullptr; // Yer tutucu
-    }
-
-
-    // Hiçbirine uymuyorsa hata ver
-     throw error(peek(), "Expect expression.");
-     std::cerr << "[Line " << peek().line << "] Error: Expect expression." << std::endl;
-      hadError = true;
-     return nullptr; // Hata durumunda null döndür
-}
-
-
-// Yardımcı Ayrıştırma Metodları
-
-// Mevcut token'a bak (tüketme)
-Token Parser::peek() const {
-    return tokens[current];
-}
-
-// Bir önceki token'a bak
-Token Parser::previous() const {
-    return tokens[current - 1];
-}
-
-// Mevcut token'ı tüket ve döndür
+// Sonraki token'ı tüketir ve döndürür
 Token Parser::advance() {
     if (!isAtEnd()) current++;
     return previous();
 }
 
-// Mevcut token'ın tipini kontrol et
+// Mevcut token'ı tüketmeden döndürür
+Token Parser::peek() const {
+    return tokens[current];
+}
+
+// Tüketilen son token'ı döndürür
+Token Parser::previous() const {
+    return tokens[current - 1];
+}
+
+// Mevcut token'ın belirtilen türde olup olmadığını kontrol eder
 bool Parser::check(TokenType type) const {
     if (isAtEnd()) return false;
     return peek().type == type;
 }
 
-// Mevcut token, verilen tiplerden biriyle eşleşiyor mu?
-// Eşleşiyorsa tüket ve true döndür, aksi halde false döndür.
-template<typename... Types>
-bool Parser::match(TokenType type, Types... rest) {
-    if (check(type)) {
-        advance();
-        return true;
-    }
-    // Variadic template için recursive check
-    if constexpr (sizeof...(rest) > 0) {
-        return match(rest...);
+// Mevcut token'ın türü, verilen türlerden biriyle eşleşirse true döndürür ve ilerler
+bool Parser::match(const std::vector<TokenType>& types) {
+    for (TokenType type : types) {
+        if (check(type)) {
+            advance();
+            return true;
+        }
     }
     return false;
 }
 
-
-// Mevcut token'ı beklenen tipteyse tüket, değilse hata ver
+// Belirtilen token türünü tüketir, aksi takdirde hata verir
 Token Parser::consume(TokenType type, const std::string& message) {
-    if (check(type)) {
-        return advance();
-    }
-
-    // Hata oluştur ve fırlat
+    if (check(type)) return advance();
     throw error(peek(), message);
-    // Veya sadece hata raporla ve hata durumunu işaretle:
-     error(peek(), message);
-     return previous(); // Hata durumunda son token'ı döndürmek iyi olmayabilir
-     return Token(TokenType::EOF_TOKEN, "", -1); // Hata durumunda geçersiz bir token döndür
 }
 
-// Ayrıştırma hatası oluşturma (fırlatılan ParseError nesnesi)
-ParseError Parser::error(const Token& token, const std::string& message) {
-    // Global hata flag'ini set etmek main fonksiyonunun durmasına yardımcı olur
-     hadError = true;
-    return ParseError(token, message); // Bir ParseError nesnesi fırlat
+// Hata raporlar ve ParseError fırlatır
+Parser::ParseError Parser::error(const Token& token, const std::string& message) {
+    errorReporter.error(token, message);
+    return ParseError(); // Hata kurtarma için özel bir exception fırlatır
 }
 
-
-// Hata kurtarma: Bir hata oluştuğunda, bir sonraki deyimin başına atlamaya çalış
+// Hata kurtarma mekanizması: Bir sonraki geçerli ifade başlangıcına atlar
 void Parser::synchronize() {
-    advance(); // Hata token'ını atla
+    advance(); // Hata olan token'ı atla
 
     while (!isAtEnd()) {
-        // Bir önceki token ';' ise, muhtemelen bir deyim sonudur
-        if (previous().type == TokenType::SEMICOLON) return;
+        if (previous().type == TokenType::SEMICOLON) return; // Noktalı virgülden sonra devam et
 
-        // Belirli anahtar kelimeleri gördüğümüzde de bir deyim başlangıcı olabilir
-        // Bu anahtar kelimeler genellikle bir deyimin veya bildirimin başında bulunur
+        // İfade veya bildirim başlangıç token'larını ara
         switch (peek().type) {
             case TokenType::CLASS:
             case TokenType::FUN:
             case TokenType::VAR:
-            case TokenType::FOR:
             case TokenType::IF:
             case TokenType::WHILE:
-            case TokenType::PRINT:
             case TokenType::RETURN:
+            case TokenType::MATCH:
             case TokenType::IMPORT:
-            case TokenType::MATCH: // Match deyimi başlangıcı
-                return; // Burada dur ve ayrıştırmaya devam et
-
+                return; // Geçerli bir bildirim başlangıcı bulduk
             default:
-                // Diğer durumlarda tokenları atlamaya devam et
-                break;
+                // Hiçbiri değilse, token'ı atlamaya devam et
+                advance();
         }
-
-        advance(); // Token'ı atla
     }
 }
 
+// --- Gramer Kurallarına Karşılık Gelen Parsing Metodları ---
 
-// Tüm tokenlar tüketildi mi?
-bool Parser::isAtEnd() const {
-    return peek().type == TokenType::EOF_TOKEN;
+// Ana parsing metodu: Token listesini alır ve bir AST döndürür
+std::vector<StmtPtr> Parser::parse() {
+    std::vector<StmtPtr> statements;
+    while (!isAtEnd()) {
+        try {
+            statements.push_back(declaration()); // Bildirimleri parse et
+        } catch (const ParseError& e) {
+            synchronize(); // Hata durumunda kurtarma yap
+        }
+    }
+    return statements;
 }
 
-// Variadic template match fonksiyonu için explicit specialization
-// Bu, C++17'den önce gerekebilir, modern C++'ta template otomatik olarak çözülür.
-template bool Parser::match<TokenType>(TokenType);
-template bool Parser::match<TokenType, TokenType>(TokenType, TokenType);
-// ... gerektiği kadar ekleyin veya C++17 kullanın.
+// En üst seviye bildirimleri işler (var, class, fun veya normal statement)
+StmtPtr Parser::declaration() {
+    if (match({TokenType::VAR})) return varDeclaration();
+    if (match({TokenType::CLASS})) return classDeclaration();
+    if (match({TokenType::FUN})) return funDeclaration("function");
+    if (match({TokenType::IMPORT})) return importStatement(); // Import bildirimi
+
+    return statement(); // Eğer özel bir bildirim değilse, genel bir bildirimdir
+}
+
+// 'var' bildirimi: var identifier = expression;
+StmtPtr Parser::varDeclaration() {
+    Token name = consume(TokenType::IDENTIFIER, "Değişken ismi bekleniyor.");
+
+    ExprPtr initializer = nullptr;
+    if (match({TokenType::EQUAL})) {
+        initializer = expression(); // Başlangıç değeri varsa parse et
+    }
+
+    consume(TokenType::SEMICOLON, "Değişken bildiriminden sonra ';' bekleniyor.");
+    return std::make_shared<VarStmt>(name, initializer);
+}
+
+// 'class' bildirimi: class ClassName < SuperClass { ... }
+StmtPtr Parser::classDeclaration() {
+    Token name = consume(TokenType::IDENTIFIER, "Sınıf ismi bekleniyor.");
+
+    ExprPtr superclass = nullptr;
+    if (match({TokenType::LESS})) { // Miras alma varsa (<)
+        consume(TokenType::IDENTIFIER, "Üst sınıf ismi bekleniyor.");
+        superclass = std::make_shared<VariableExpr>(previous()); // Üst sınıf bir değişken ifadesidir
+    }
+
+    consume(TokenType::LEFT_BRACE, "Sınıf isminden sonra '{' bekleniyor.");
+
+    std::vector<FunStmtPtr> methods;
+    while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
+        methods.push_back(std::dynamic_pointer_cast<FunStmt>(funDeclaration("method")));
+    }
+
+    consume(TokenType::RIGHT_BRACE, "Sınıf gövdesinden sonra '}' bekleniyor.");
+    return std::make_shared<ClassStmt>(name, superclass, methods);
+}
+
+// 'fun' (fonksiyon/metot) bildirimi: fun name(params) { ... }
+StmtPtr Parser::funDeclaration(const std::string& kind) {
+    Token name = consume(TokenType::IDENTIFIER, kind + " ismi bekleniyor.");
+    consume(TokenType::LEFT_PAREN, kind + " isminden sonra '(' bekleniyor.");
+
+    std::vector<Token> parameters;
+    if (!check(TokenType::RIGHT_PAREN)) {
+        do {
+            if (parameters.size() >= 255) {
+                error(peek(), "Fonksiyon çok fazla parametreye sahip olamaz.");
+            }
+            parameters.push_back(consume(TokenType::IDENTIFIER, "Parametre ismi bekleniyor."));
+        } while (match({TokenType::COMMA}));
+    }
+    consume(TokenType::RIGHT_PAREN, "Parametrelerden sonra ')' bekleniyor.");
+
+    consume(TokenType::LEFT_BRACE, kind + " gövdesinden önce '{' bekleniyor.");
+    std::vector<StmtPtr> body = std::dynamic_pointer_cast<BlockStmt>(blockStatement())->statements;
+
+    return std::make_shared<FunStmt>(name, parameters, body);
+}
+
+// Genel bildirim
+StmtPtr Parser::statement() {
+    if (match({TokenType::IF})) return ifStatement();
+    if (match({TokenType::WHILE})) return whileStatement();
+    if (match({TokenType::RETURN})) return returnStatement();
+    if (match({TokenType::LEFT_BRACE})) return blockStatement(); // Tek başına blok
+    if (match({TokenType::MATCH})) return matchStatement(); // Match bildirimi
+
+    return expressionStatement(); // Eğer özel bir bildirim değilse, ifade bildirimidir
+}
+
+// 'if' bildirimi: if (condition) { ... } else { ... }
+StmtPtr Parser::ifStatement() {
+    consume(TokenType::LEFT_PAREN, "'if' den sonra '(' bekleniyor.");
+    ExprPtr condition = expression();
+    consume(TokenType::RIGHT_PAREN, "Koşuldan sonra ')' bekleniyor.");
+
+    StmtPtr thenBranch = statement(); // 'then' bloğu
+    StmtPtr elseBranch = nullptr;
+    if (match({TokenType::ELSE})) {
+        elseBranch = statement(); // 'else' bloğu varsa
+    }
+
+    return std::make_shared<IfStmt>(condition, thenBranch, elseBranch);
+}
+
+// 'while' bildirimi: while (condition) { ... }
+StmtPtr Parser::whileStatement() {
+    consume(TokenType::LEFT_PAREN, "'while' den sonra '(' bekleniyor.");
+    ExprPtr condition = expression();
+    consume(TokenType::RIGHT_PAREN, "Koşuldan sonra ')' bekleniyor.");
+
+    StmtPtr body = statement();
+
+    return std::make_shared<WhileStmt>(condition, body);
+}
+
+// 'match' bildirimi: match (expression) { case pattern: statement; ... default: statement; }
+StmtPtr Parser::matchStatement() {
+    consume(TokenType::LEFT_PAREN, "'match' den sonra '(' bekleniyor.");
+    ExprPtr subject = expression(); // Eşleştirilecek ifade
+    consume(TokenType::RIGHT_PAREN, "Match ifadesinden sonra ')' bekleniyor.");
+    consume(TokenType::LEFT_BRACE, "Match ifadesi için '{' bekleniyor.");
+
+    std::vector<MatchCase> cases = parseMatchCases();
+
+    consume(TokenType::RIGHT_BRACE, "Match gövdesinden sonra '}' bekleniyor.");
+    return std::make_shared<MatchStmt>(subject, cases);
+}
+
+// Match ifadesi için case'leri çözümler
+std::vector<MatchCase> Parser::parseMatchCases() {
+    std::vector<MatchCase> cases;
+    while (check(TokenType::CASE) || check(TokenType::DEFAULT)) {
+        cases.push_back(parseMatchCase());
+    }
+    return cases;
+}
+
+// Tek bir match case'i çözer: case pattern: statement; veya default: statement;
+MatchCase Parser::parseMatchCase() {
+    bool isDefault = false;
+    if (match({TokenType::DEFAULT})) {
+        isDefault = true;
+    } else {
+        consume(TokenType::CASE, "'case' veya 'default' anahtar kelimesi bekleniyor.");
+    }
+
+    ExprPtr pattern = nullptr;
+    if (!isDefault) {
+        pattern = parsePattern(); // Deseni parse et
+    }
+
+    consume(TokenType::COLON, isDefault ? "Default durumundan sonra ':' bekleniyor." : "Desenden sonra ':' bekleniyor.");
+
+    // Match case'in gövdesi bir blok veya tek bir ifade olabilir
+    StmtPtr body;
+    if (check(TokenType::LEFT_BRACE)) {
+        body = blockStatement();
+    } else {
+        body = statement(); // Basit bir ifade bildirimi olabilir (e.g. print("Hello");)
+    }
+
+    return MatchCase(pattern, body);
+}
+
+// Match ifadesindeki desenleri çözümle.
+// Şimdilik sadece literal desenleri (sayı, string, boolean, none) ve tanımlayıcıları (var desenleri için) destekleyeceğiz.
+// Daha karmaşık desenler (listeler, objeler) için daha fazla mantık gerekir.
+ExprPtr Parser::parsePattern() {
+    if (match({TokenType::NUMBER, TokenType::STRING, TokenType::TRUE, TokenType::FALSE, TokenType::NONE})) {
+        return std::make_shared<LiteralExpr>(previous().literal);
+    }
+    if (match({TokenType::IDENTIFIER})) {
+        // Bu bir değişken deseni olabilir (örneğin 'case x:'), bu durumda x'i VariableExpr olarak döndürüyoruz.
+        // Interpreter'ın 'match' implementasyonu bu tür desenleri özel olarak ele alacaktır.
+        return std::make_shared<VariableExpr>(previous());
+    }
+    // TODO: Daha karmaşık desen türlerini (liste desenleri, obje desenleri, if koşullu desenler) burada ekle
+    throw error(peek(), "Beklenmeyen desen tipi.");
+}
+
+
+// 'import' bildirimi: import module_name; veya import module_name as alias;
+StmtPtr Parser::importStatement() {
+    Token moduleName = consume(TokenType::IDENTIFIER, "İmport edilecek modül ismi bekleniyor.");
+    Token alias; // Opsiyonel alias
+
+    if (match({TokenType::AS})) { // 'as' anahtar kelimesi varsa
+        alias = consume(TokenType::IDENTIFIER, "Modül için alias ismi bekleniyor.");
+    }
+
+    consume(TokenType::SEMICOLON, "İmport bildiriminden sonra ';' bekleniyor.");
+    return std::make_shared<ImportStmt>(moduleName, alias.lexeme.empty() ? "" : alias.lexeme);
+}
+
+
+// 'return' bildirimi: return expression; veya return;
+StmtPtr Parser::returnStatement() {
+    Token keyword = previous(); // 'return' token'ı
+
+    ExprPtr value = nullptr;
+    if (!check(TokenType::SEMICOLON)) { // Eğer noktalı virgül gelmiyorsa, bir değer döndürüyor demektir
+        value = expression();
+    }
+
+    consume(TokenType::SEMICOLON, "Return bildiriminden sonra ';' bekleniyor.");
+    return std::make_shared<ReturnStmt>(keyword, value);
+}
+
+// Süslü parantez içindeki kod bloğu { ... }
+StmtPtr Parser::blockStatement() {
+    std::vector<StmtPtr> statements;
+    while (!check(TokenType::RIGHT_BRACE) && !isAtEnd()) {
+        statements.push_back(declaration()); // Blok içinde de bildirimler olabilir
+    }
+    consume(TokenType::RIGHT_BRACE, "Bloktan sonra '}' bekleniyor.");
+    return std::make_shared<BlockStmt>(statements);
+}
+
+// Sadece bir ifade olan bildirim: expression;
+StmtPtr Parser::expressionStatement() {
+    ExprPtr expr = expression();
+    consume(TokenType::SEMICOLON, "İfade bildiriminden sonra ';' bekleniyor.");
+    return std::make_shared<ExprStmt>(expr);
+}
+
+// --- İfade (Expression) Parsing Metodları ---
+
+// Ana ifade parsing metodu (en düşük öncelikli operatörden başlar)
+ExprPtr Parser::expression() {
+    return assignment();
+}
+
+// Atama: identifier = expression; veya object.property = expression;
+ExprPtr Parser::assignment() {
+    ExprPtr expr = logicalOr(); // Atama sol tarafı bir L-value olmalı, bu yüzden en azından bir atama öncesi ifade olmalı
+
+    if (match({TokenType::EQUAL})) {
+        Token equals = previous(); // '=' token'ı
+        ExprPtr value = assignment(); // Sağ taraftaki değer (sağdan sola öncelik için recursive çağrı)
+
+        if (std::dynamic_pointer_cast<VariableExpr>(expr)) {
+            // Değişken ataması (örn: x = 10)
+            Token name = std::dynamic_pointer_cast<VariableExpr>(expr)->name;
+            return std::make_shared<AssignExpr>(name, value);
+        } else if (std::dynamic_pointer_cast<GetExpr>(expr)) {
+            // Property ataması (örn: obj.prop = 10)
+            GetExprPtr get = std::dynamic_pointer_cast<GetExpr>(expr);
+            return std::make_shared<SetExpr>(get->object, get->name, value);
+        }
+
+        errorReporter.error(equals, "Geçersiz atama hedefi.");
+        return nullptr; // Hata durumunda null döndür veya ParseError fırlat
+    }
+
+    return expr;
+}
+
+// Mantıksal OR: expr or expr
+ExprPtr Parser::logicalOr() {
+    ExprPtr expr = logicalAnd();
+
+    while (match({TokenType::OR})) {
+        Token op = previous();
+        ExprPtr right = logicalAnd();
+        expr = std::make_shared<LogicalExpr>(expr, op, right);
+    }
+    return expr;
+}
+
+// Mantıksal AND: expr and expr
+ExprPtr Parser::logicalAnd() {
+    ExprPtr expr = equality();
+
+    while (match({TokenType::AND})) {
+        Token op = previous();
+        ExprPtr right = equality();
+        expr = std::make_shared<LogicalExpr>(expr, op, right);
+    }
+    return expr;
+}
+
+// Eşitlik: expr == expr | expr != expr
+ExprPtr Parser::equality() {
+    ExprPtr expr = comparison();
+
+    while (match({TokenType::BANG_EQUAL, TokenType::EQUAL_EQUAL})) {
+        Token op = previous();
+        ExprPtr right = comparison();
+        expr = std::make_shared<BinaryExpr>(expr, op, right);
+    }
+    return expr;
+}
+
+// Karşılaştırma: expr > expr | expr >= expr | expr < expr | expr <= expr
+ExprPtr Parser::comparison() {
+    ExprPtr expr = addition();
+
+    while (match({TokenType::GREATER, TokenType::GREATER_EQUAL, TokenType::LESS, TokenType::LESS_EQUAL})) {
+        Token op = previous();
+        ExprPtr right = addition();
+        expr = std::make_shared<BinaryExpr>(expr, op, right);
+    }
+    return expr;
+}
+
+// Toplama/Çıkarma: expr + expr | expr - expr
+ExprPtr Parser::addition() {
+    ExprPtr expr = multiplication();
+
+    while (match({TokenType::MINUS, TokenType::PLUS})) {
+        Token op = previous();
+        ExprPtr right = multiplication();
+        expr = std::make_shared<BinaryExpr>(expr, op, right);
+    }
+    return expr;
+}
+
+// Çarpma/Bölme: expr * expr | expr / expr
+ExprPtr Parser::multiplication() {
+    ExprPtr expr = unary();
+
+    while (match({TokenType::SLASH, TokenType::STAR})) {
+        Token op = previous();
+        ExprPtr right = unary();
+        expr = std::make_shared<BinaryExpr>(expr, op, right);
+    }
+    return expr;
+}
+
+// Tekli operatörler: !expr | -expr
+ExprPtr Parser::unary() {
+    if (match({TokenType::BANG, TokenType::MINUS})) {
+        Token op = previous();
+        ExprPtr right = unary(); // Sağdan sola öncelik için recursive çağrı
+        return std::make_shared<UnaryExpr>(op, right);
+    }
+    return call(); // Tekli operatörden sonra çağrı ifadeleri gelebilir (örn: -obj.method())
+}
+
+// Fonksiyon çağrısı, metot çağrısı, dizin erişimi
+ExprPtr Parser::call() {
+    ExprPtr expr = primary(); // Çağrının sol tarafı (birincil ifade veya tanımlayıcı olabilir)
+
+    while (true) {
+        if (match({TokenType::LEFT_PAREN})) { // Fonksiyon çağrısı
+            std::vector<ExprPtr> arguments;
+            if (!check(TokenType::RIGHT_PAREN)) { // Argümanlar boş değilse
+                do {
+                    if (arguments.size() >= 255) {
+                        error(peek(), "Fonksiyon çok fazla argümana sahip olamaz.");
+                    }
+                    arguments.push_back(expression());
+                } while (match({TokenType::COMMA}));
+            }
+            Token paren = consume(TokenType::RIGHT_PAREN, "Argümanlardan sonra ')' bekleniyor.");
+            expr = std::make_shared<CallExpr>(expr, paren, arguments);
+        } else if (match({TokenType::DOT})) { // Property erişimi (örn: object.property)
+            Token name = consume(TokenType::IDENTIFIER, "Property ismi bekleniyor.");
+            expr = std::make_shared<GetExpr>(expr, name);
+        } else if (match({TokenType::LEFT_BRACKET})) { // Dizin erişimi (örn: array[index])
+            ExprPtr index = expression();
+            Token bracket = consume(TokenType::RIGHT_BRACKET, "Dizin erişiminden sonra ']' bekleniyor.");
+            expr = std::make_shared<GetExpr>(expr, index->toString()); // Geçiçi çözüm: IndexExpr tipi oluşturulabilir
+            // TODO: Dizilere doğrudan erişim için ayrı bir IndexExpr yapısı daha uygun olabilir
+             return std::make_shared<IndexExpr>(expr, index);
+        }
+        else {
+            break; // Daha fazla çağrı veya erişim yoksa döngüden çık
+        }
+    }
+    return expr;
+}
+
+// Temel ifadeler (literaller, parantezli ifadeler, tanımlayıcılar, 'this', 'super')
+ExprPtr Parser::primary() {
+    if (match({TokenType::FALSE})) return std::make_shared<LiteralExpr>(false);
+    if (match({TokenType::TRUE})) return std::make_shared<LiteralExpr>(true);
+    if (match({TokenType::NONE})) return std::make_shared<LiteralExpr>(std::monostate{});
+
+    if (match({TokenType::NUMBER})) return std::make_shared<LiteralExpr>(std::get<double>(previous().literal));
+    if (match({TokenType::STRING})) return std::make_shared<LiteralExpr>(std::get<std::string>(previous().literal));
+
+    if (match({TokenType::SUPER})) {
+        Token keyword = previous();
+        consume(TokenType::DOT, "'super' anahtar kelimesinden sonra '.' bekleniyor.");
+        Token method = consume(TokenType::IDENTIFIER, "Üst sınıf metot ismi bekleniyor.");
+        return std::make_shared<SuperExpr>(keyword, method);
+    }
+    if (match({TokenType::THIS})) return std::make_shared<ThisExpr>(previous());
+
+    if (match({TokenType::IDENTIFIER})) return std::make_shared<VariableExpr>(previous());
+
+    if (match({TokenType::LEFT_PAREN})) {
+        ExprPtr expr = expression();
+        consume(TokenType::RIGHT_PAREN, "İfadeden sonra ')' bekleniyor.");
+        return std::make_shared<GroupingExpr>(expr);
+    }
+
+    // List literals: [expr, expr, ...]
+    if (match({TokenType::LEFT_BRACKET})) {
+        std::vector<ExprPtr> elements;
+        if (!check(TokenType::RIGHT_BRACKET)) {
+            do {
+                elements.push_back(expression());
+            } while (match({TokenType::COMMA}));
+        }
+        consume(TokenType::RIGHT_BRACKET, "Liste literalinden sonra ']' bekleniyor.");
+        return std::make_shared<ListLiteralExpr>(elements);
+    }
+
+    // Eğer hiçbir şey eşleşmezse, beklenmeyen bir token'dır
+    throw error(peek(), "Beklenmeyen ifade.");
+}
