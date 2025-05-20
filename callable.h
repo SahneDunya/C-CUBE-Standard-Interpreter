@@ -3,40 +3,52 @@
 
 #include <vector>
 #include <string>
-#include <memory> // std::shared_ptr için
+#include <memory>
 
-// Interpreter sınıfını burada kullanacağımız için ileri bildirim yapıyoruz.
-// Bu, Callable sınıfının Interpreter tanımından önce kullanılabilmesini sağlar
-// ve dairesel bağımlılıkları önlemeye yardımcı olur.
+#include "value.h" // Çağrılabilir nesneler argüman ve dönüş değerleri olarak Value kullanır
+
+// İleri bildirim
 class Interpreter;
 
-// ValuePtr tipinin tanımlı olduğu value.h dosyasını dahil ediyoruz.
-// Call metodunun argümanları ve dönüş tipi ValuePtr olacaktır.
-#include "value.h"
-
-// C-CUBE dilinde çağrılabilen her şey için temel soyut sınıf (arayüz)
 class Callable {
 public:
-    // Sanal yıkıcı: Türemiş sınıflar doğru şekilde temizlenebilsin.
-    virtual ~Callable() = default;
+    virtual ~Callable() = default; // Sanal yıkıcı
 
-    // Bu çağrılabilir öğenin beklediği argüman sayısını döndürür.
-    // Değişken sayıda argüman alanlar için özel bir değer (örn: -1) kullanılabilir.
-    virtual int arity() const = 0;
+    // Çağrılabilir nesnenin beklediği argüman sayısını döndürür
+    virtual size_t arity() const = 0;
 
-    // Çağrılabilir öğeyi verilen argümanlarla çalıştırır.
-    // Parametreler:
-    //   interpreter: Çalıştırmayı gerçekleştiren yorumlayıcı nesnesi.
-    //                Fonksiyon gövdesini çalıştırmak için yorumlayıcının state'ine (ortamına) erişim gerekebilir.
-    //   arguments: Çağrıya geçirilen değerlerin bir vektörü (ValuePtr).
-    // Geri dönüş değeri: Çağrının sonucu olan değer (ValuePtr).
-    virtual ValuePtr call(Interpreter& interpreter, const std::vector<ValuePtr>& arguments) = 0;
-
-    // Çağrılabilir öğenin string temsilini döndürür (hata ayıklama veya print için kullanışlı).
-    virtual std::string toString() const = 0;
+    // Çağrılabilir nesneyi yürütür
+    virtual Value call(Interpreter& interpreter, const std::vector<Value>& arguments) = 0;
 };
 
-// Callable nesnelerine akıllı işaretçi (shared_ptr) için bir alias
-using CallablePtr = std::shared_ptr<Callable>;
+// BoundMethod sınıfı (genellikle ayrı bir dosyada tanımlanır, örneğin bound_method.h)
+// Bir sınıf metodunu bir instance'a bağlar.
+// Bu sınıf da ObjPtr olarak yönetildiği için Object'ten türemelidir.
+#ifndef C_CUBE_BOUND_METHOD_H
+#define C_CUBE_BOUND_METHOD_H
+
+#include "object.h"      // Temel Object sınıfı
+#include "callable.h"    // Callable arayüzü
+#include "instance.h"    // Bağlanılacak instance için
+#include "function.h"    // Bağlanılacak fonksiyon için
+
+class BoundMethod : public Object, public Callable {
+public:
+    std::shared_ptr<CCubeInstance> instance;
+    std::shared_ptr<CCubeFunction> function;
+
+    BoundMethod(std::shared_ptr<CCubeInstance> instance, std::shared_ptr<CCubeFunction> function);
+
+    // Callable arayüzünden
+    virtual Value call(Interpreter& interpreter, const std::vector<Value>& arguments) override;
+    virtual size_t arity() const override;
+
+    // Object arayüzünden
+    virtual ObjectType getType() const override { return ObjectType::BOUND_METHOD; }
+    virtual std::string toString() const override;
+    virtual size_t getSize() const override; // GC için boyut hesaplama
+};
+
+#endif // C_CUBE_BOUND_METHOD_H
 
 #endif // C_CUBE_CALLABLE_H
