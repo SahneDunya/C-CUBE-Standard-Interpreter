@@ -1,74 +1,47 @@
-# C-CUBE Yorumlayıcısı Makefile
-
-# Derleyici
+# Derleyici ayarları
 CXX = clang++
+CXXFLAGS = -std=c++17 -Wall -Wextra -pedantic -g # -g hata ayıklama sembolleri için
 
-# Derleyici Bayrakları (Flags)
-# -std=c++17: C++17 standardını kullan (std::variant, std::filesystem vb. için)
-# -Wall: Tüm standart uyarıları etkinleştir
-# -Wextra: Ek uyarıları etkinleştir
-# -Wpedantic: Standartın katı gereksinimleri dışındaki yapıları uyar
-# -g: Hata ayıklama bilgisini dahil et
-# -I.: Mevcut dizini include yollarına ekle (başlık dosyaları için)
-CXXFLAGS = -std=c++17 -Wall -Wextra -Wpedantic -g -I.
+# Kaynak dizinleri
+SRC_DIR = . # Kaynak dosyalarının bulunduğu dizin (mevcut dizin)
 
-# Kaynak Dosyaları (.cpp)
-SRCS = \
-	lexer.cpp \
-	value.cpp \
-	environment.cpp \
-	function.cpp \
-	object.cpp \
-	class.cpp \
-	builtin_functions.cpp \
-	gc.cpp \
-	c_cube_module.cpp \
-	module_loader.cpp \
-	error_reporter.cpp \
-	utils.cpp \
-	main.cpp
+# Nesne dosyalarının oluşturulacağı dizin
+BUILD_DIR = build
 
-# Nesne Dosyaları (.o) - Kaynak dosyalarından otomatik olarak türetilir
-OBJS = $(SRCS:.cpp=.o)
+# Tüm .cpp dosyaları
+SRCS = $(wildcard $(SRC_DIR)/*.cpp)
 
-# Çalıştırılabilir Dosya Adı
-EXEC = ccube
+# Karşılık gelen .o dosyaları
+OBJS = $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 
-# Varsayılan Hedef: Çalıştırılabilir dosyayı oluştur
-all: $(EXEC)
+# Çalıştırılabilir dosyanın adı
+TARGET = c-cube
 
-# Çalıştırılabilir dosyayı nesne dosyalarından bağlama kuralı
-$(EXEC): $(OBJS)
-	$(CXX) $(OBJS) -o $(EXEC) $(CXXFLAGS)
+.PHONY: all clean run
 
-# .cpp dosyalarını .o dosyalarına derleme kuralı (Desen Kuralı)
-# $<: Kuralın önkoşulu (yani .cpp dosyası)
-# $@: Kuralın hedefi (yani .o dosyası)
-%.o: %.cpp
-	$(CXX) -c $< -o $@ $(CXXFLAGS)
+# Varsayılan hedef: çalıştırılabilir dosyayı oluştur
+all: $(BUILD_DIR) $(TARGET)
 
-# Phony Hedefler (Dosya karşılığı olmayan hedefler)
-.PHONY: all clean
+# Build dizini oluştur
+$(BUILD_DIR):
+	@mkdir -p $(BUILD_DIR)
 
-# Clean Hedefi: Oluşturulan nesne ve çalıştırılabilir dosyaları kaldır
+# Çalıştırılabilir dosyayı bağla
+$(TARGET): $(OBJS)
+	@echo "Bağlanıyor: $@"
+	$(CXX) $(CXXFLAGS) $(OBJS) -o $@
+
+# .cpp dosyalarından .o dosyalarını derle
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
+	@echo "Derleniyor: $<"
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Temizlik hedefi: nesne dosyalarını ve çalıştırılabilir dosyayı sil
 clean:
-	rm -f $(OBJS) $(EXEC)
+	@echo "Temizleniyor..."
+	@rm -rf $(BUILD_DIR) $(TARGET)
 
-# --- Bağımlılıklar ---
-# Başlık dosyası bağımlılıkları manuel olarak listelenmiştir.
-# Daha büyük projeler için, bağımlılıkları otomatik olarak oluşturmak için
-# g++ -MM veya makedepend gibi araçlar kullanılabilir.
-
-lexer.o: lexer.cpp lexer.h token.h
-value.o: value.cpp value.h gc.h object.h function.h class.h c_cube_module.h callable.h
-environment.o: environment.cpp environment.h value.h gc.h token.h error_reporter.h
-function.o: function.cpp function.h callable.h ast.h token.h environment.h value.h interpreter.h gc.h
-object.o: object.cpp object.h value.h token.h class.h function.h gc.h
-class.o: class.cpp class.h callable.h function.h object.h value.h interpreter.h gc.h
-builtin_functions.o: builtin_functions.cpp builtin_functions.h callable.h value.h interpreter.h
-gc.o: gc.cpp gc.h interpreter.h environment.h value.h object.h function.h class.h c_cube_module.h
-c_cube_module.o: c_cube_module.cpp c_cube_module.h gc.h environment.h ast.h value.h
-module_loader.o: module_loader.cpp module_loader.h lexer.h parser.h interpreter.h error_reporter.h value.h c_cube_module.h
-error_reporter.o: error_reporter.cpp error_reporter.h token.h
-utils.o: utils.cpp utils.h value.h
-main.o: main.cpp lexer.h parser.h interpreter.h error_reporter.h
+# Programı çalıştırma hedefi (sadece `make run` ile)
+run: all
+	@echo "C-CUBE Yorumlayıcısı Başlatılıyor..."
+	@./$(TARGET) $(ARGS) # ARGS değişkeni ile komut satırı argümanları geçilebilir (örn: make run ARGS="program.ccb")
