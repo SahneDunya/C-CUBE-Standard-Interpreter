@@ -6,6 +6,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "interpreter.h"
+#include "error_reporter.h"
 // Diğer include'lar
 
 // Kaynak kodu dosyadan okuma fonksiyonu
@@ -24,6 +25,10 @@
  void runtimeError(const RuntimeError& error); // Interpreter'dan gelen hatalar için
 
 int main(int argc, char* argv[]) {
+  ErrorReporter errorReporter;
+    std::vector<std::string> moduleSearchPaths;
+    moduleSearchPaths.push_back("."); // Mevcut dizin
+    moduleSearchPaths.push_back("./modules");
     if (argc > 2) {
         std::cerr << "Usage: ccube [script]" << std::endl;
         return 1;
@@ -37,6 +42,8 @@ int main(int argc, char* argv[]) {
 
     // hadError veya hadRuntimeError durumuna göre çıkış kodu döndürme
      return hadError ? 65 : (hadRuntimeError ? 70 : 0);
+ Interpreter interpreter(errorReporter, moduleSearchPaths);
+    // ... yorumlayıcıyı kullan
      return 0; // Şimdilik basit bir dönüş
 }
 
@@ -62,4 +69,3 @@ void run(const std::string& source) {
     interpreter.interpret(statements); // Yorumlamayı başlat
 
     // Runtime hatası kontrolü yapılabilir
-}
