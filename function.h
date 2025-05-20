@@ -24,7 +24,7 @@ public:
     CCubeFunction(std::shared_ptr<FunStmt> declaration, std::shared_ptr<Environment> closure, bool isInitializer);
 
     // Callable arayüzünden
-    virtual Value call(Interpreter& interpreter, const std::vector<Value>& arguments) override;
+    virtual Value call(Interpreter& interpreter, const std::vector<Value>& arguments, std::shared_ptr<CCubeInstance> this_instance = nullptr) override;
     virtual size_t arity() const override;
 
     // Object arayüzünden
