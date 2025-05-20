@@ -10,6 +10,7 @@
 // İleri bildirimler
  class C_CUBE_Object; // Nesne yönelimli kısım için
  class C_CUBE_Function; // Fonksiyonlar için
+ class C_CUBE_Module;
 
 // C-CUBE runtime değerlerini temsil eden sınıf/yapı
  std::variant kullanmak farklı tipleri tutmak için iyi bir yoldur
@@ -33,6 +34,23 @@ using ValuePtr = std::shared_ptr<Value>; // Değerlere işaretçiler
  std::string valueToString(ValuePtr value);
  bool isTruthy(ValuePtr value); // Koşullu ifadeler için (Python'daki gibi true/false değerlendirme)
  bool isEqual(ValuePtr v1, ValuePtr v2);
-// ...
+
+using ModulePtr = std::shared_ptr<C_CUBE_Module>; // veya sadece shared_ptr<Module>
+
+using ValueType = std::variant<
+    std::monostate, // Represents 'none'
+    bool,
+    double,
+    std::string,
+    std::shared_ptr<C_CUBE_Object>,
+    std::shared_ptr<C_CUBE_Function>,
+    std::shared_ptr<C_CUBE_Class>,
+    std::shared_ptr<Callable>, // Fonksiyonlar ve built-in'ler için
+    // ... diğer tipler (List, Dict, vb.)
+    ModulePtr // Yeni eklenen modül tipi!
+>;
+
+// ValuePtr tanımınız da bu ValueType'ı kullanmalı.
+using ValuePtr = std::shared_ptr<ValueType>;
 
 #endif // C_CUBE_VALUE_H
