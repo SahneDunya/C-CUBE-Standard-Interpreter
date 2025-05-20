@@ -1,54 +1,47 @@
 #include "environment.h"
 
-// Global ortam için constructor (parent'ı yok)
+// Constructor
 Environment::Environment() : enclosing(nullptr) {}
 
-// İç içe geçmiş ortamlar için constructor (bir parent'ı var)
+// Constructor for nested environments
 Environment::Environment(std::shared_ptr<Environment> enclosing)
     : enclosing(enclosing) {}
 
-// Yeni bir değişken tanımlar
+// Defines a new variable in the current environment
 void Environment::define(const std::string& name, Value value) {
     values[name] = value;
 }
 
-// Mevcut bir değişkene değer atar
-// Atama işlemi, değişkeni mevcut ortamdan başlayarak üst ortamlarda arar.
+// Assigns a value to an existing variable, searching up the scope chain
 void Environment::assign(const Token& name, Value value) {
-    if (values.count(name.lexeme)) { // Mevcut ortamda var mı?
+    if (values.count(name.lexeme)) {
         values[name.lexeme] = value;
         return;
     }
-    if (enclosing != nullptr) { // Üst ortamda ara
+    if (enclosing != nullptr) {
         enclosing->assign(name, value);
         return;
     }
-    // Değişken bulunamadı, hata fırlat
     throw RuntimeException(name, "Tanımlanmamış değişken '" + name.lexeme + "'.");
 }
 
-// Bir değişkenin değerini döndürür
-// Değişkeni mevcut ortamdan başlayarak üst ortamlarda arar.
+// Retrieves the value of a variable, searching up the scope chain
 Value Environment::get(const Token& name) {
-    if (values.count(name.lexeme)) { // Mevcut ortamda var mı?
+    if (values.count(name.lexeme)) {
         return values.at(name.lexeme);
     }
-    if (enclosing != nullptr) { // Üst ortamda ara
+    if (enclosing != nullptr) {
         return enclosing->get(name);
     }
-    // Değişken bulunamadı, hata fırlat
     throw RuntimeException(name, "Tanımlanmamış değişken '" + name.lexeme + "'.");
 }
 
-// Belirtilen uzaklıktaki ortamı bulmaya yardımcı metod
-// distance: 0 = mevcut ortam, 1 = parent, 2 = parent'ın parent'ı, vb.
+// Helper method to find an ancestor environment at a given distance
 std::shared_ptr<Environment> Environment::ancestor(int distance) {
-    std::shared_ptr<Environment> environment = shared_from_this(); // Mevcut ortam
+    std::shared_ptr<Environment> environment = shared_from_this();
     for (int i = 0; i < distance; ++i) {
         if (environment->enclosing == nullptr) {
-            // Bu durum normalde Resolver tarafından yakalanmalıydı.
-            // Resolver, her değişkenin mesafesini hesaplamalıdır.
-            // Buraya gelinmesi, bir Resolver hatasına işaret edebilir.
+            // This should ideally not happen if a resolver pre-calculated distances.
             throw std::runtime_error("Ancestor araması sırasında beklenmeyen nullptr ortam.");
         }
         environment = environment->enclosing;
@@ -56,24 +49,22 @@ std::shared_ptr<Environment> Environment::ancestor(int distance) {
     return environment;
 }
 
-// Belirli bir uzaklıktaki ortamda değişkenin değerini döndürür
-// (Resolver entegre edildiğinde kullanılır)
+// Retrieves the value of a variable at a specific scope distance
 Value Environment::getAt(int distance, const std::string& name) {
     return ancestor(distance)->values.at(name);
 }
 
-// Belirli bir uzaklıktaki ortamda değişkene değer atar
-// (Resolver entegre edildiğinde kullanılır)
+// Assigns a value to a variable at a specific scope distance
 void Environment::assignAt(int distance, const Token& name, Value value) {
     ancestor(distance)->values[name.lexeme] = value;
 }
 
-// Bir ortamın belirtilen değişkeni içerip içermediğini kontrol eder.
+// Checks if the current environment contains a variable
 bool Environment::contains(const std::string& name) const {
     return values.count(name);
 }
 
-// Ortamın üst ortamını döndürür (eğer varsa)
+// Returns the enclosing environment
 std::shared_ptr<Environment> Environment::getEnclosing() const {
     return enclosing;
 }
