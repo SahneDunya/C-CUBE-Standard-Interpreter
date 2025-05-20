@@ -1,10 +1,11 @@
 # C-CUBE
-C-CUBE-Standard-Interpreter is a standard interpreter developed for the programming language called C-CUBE developed by Sahne Dünya. C-CUBE is a programming language created to be the default language of the Python-based Game engine developed by Sahne Dünya and to develop Games. The main reason for the development of this programming language is to create a new revolution in the Game World. Because most of the programming languages ​​are almost impossible to create a modern video game using the Standard Library, so they mostly need external APIs. However, since the C-CUBE standard library is focused on game development, the necessary APIs are automatically included in the standard library. In addition, C-CUBE is based on Python, and those who start with Python will know that it is easier to program than many languages. It is also an interpretable language, which provides ease of development, although sometimes there may be performance losses, but this is a good feature. C-CUBE is very important for software developers who play a role in the game world. Maybe in the future, software developers who are interested in the game world can start training with C-CUBE instead of Python. But I need your support for every good result.
+C-CUBE Standard Interpreter is a standard interpreter designed for the C-CUBE programming language developed by Sahne Dünya. C-CUBE is a programming language developed by Sahne Dünya based on C/C++ and designed for game development. The purpose of developing the programming language called C-CUBE is to take the first place in game development and to be the language most supported by game engines and also to make game development incredibly easy. This programming language appeals to software developers in the game world. The Standard Library of this programming language is focused on game development, in fact it is so rich that I can automatically say that there are Graphics and GPU APIs! In addition, the fact that the C-CUBE programming language is based on C/C++ means that it is high-performance and being an interpretable language provides ease of development! Developing games using this programming language is easier compared to other languages ​​and developing game engines for this programming language is simpler than others. Even better news is that this programming language is open source.
 
 # Basic Fetures
-1. File extension: source file: .cube
+1. File extension: source file: .ccb
 2. Mainly supported programming: Object-oriented (OOP)
 3. Control structures: (Pattern Matching) match
-4. Memory management: Garbage collection (G/Ç)
-5. Based programming language: Python
+4. Memory management: Generational Garbage Collection - GGC
+5. Based programming language: C/C++
 6. Module system: Import
+7. Interpreter type: tree-walking
