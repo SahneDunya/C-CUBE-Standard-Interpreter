@@ -4,10 +4,12 @@
 #include <vector>
 #include <memory>
 #include <unordered_set> // İşaretli nesneleri tutmak için
+#include <deque>         // İşaretleme kuyruğu için (BFS)
 
 // İleri bildirimler
 class Environment;
 class Interpreter;
+class Value; // Value sınıfına ihtiyaç duyulacak (ValuePtr'dan GcPtr'ı çekmek için)
 
 // GcObject: Çöp toplayıcı tarafından yönetilecek temel sınıf
 class GcObject {
@@ -19,8 +21,9 @@ public:
     virtual ~GcObject() = default;
 
     // Sanal işaretleme metodu: Bu nesnenin erişilebilir çocuklarını işaretler.
-    // Her türemiş sınıf kendi çocuklarını (başka GcObject'lere olan referansları) işaretlemelidir.
-    virtual void markChildren() = 0;
+    // Artık GcObject'lerin çocuklarını işaretlemek için GarbageCollector'ı kullanacaklar.
+    // Her türemiş sınıf kendi çocuklarını (başka GcObject'lere olan referansları) gc.enqueueForMarking() ile kuyruğa eklemelidir.
+    virtual void markChildren(GarbageCollector& gc) = 0;
 };
 
 // GcPtr: GcObject'lere işaretçi alias'ı
@@ -30,12 +33,14 @@ using GcPtr = std::shared_ptr<GcObject>;
 // GarbageCollector: Çöp toplayıcının kendisi
 class GarbageCollector {
 private:
-    // Tüm tahsis edilmiş GcObject'lerin listesi
-    // Bu listeyi çöp toplayıcı "köklerden" başlatır ve işaretler.
+    // Tüm tahsis edilmiş GcObject'lerin listesi (heap)
     std::vector<GcPtr> heap;
 
-    // İşaretleme aşamasında erişilebilir (canlı) olduğu bulunan nesnelerin kümesi
+    // İşaretleme aşamasında canlı olduğu bulunan nesnelerin kümesi (tekrar işaretlemeyi önlemek için)
     std::unordered_set<GcPtr> markedObjects;
+
+    // İşaretleme aşamasında kullanılacak BFS (Breadth-First Search) kuyruğu
+    std::deque<GcPtr> markQueue;
 
     // Çöp toplayıcıyı tetiklemek için eşik değeri
     size_t allocationThreshold = 1024 * 1024; // Örneğin 1MB
@@ -62,26 +67,12 @@ public:
     // Çöp toplama döngüsünü tetikler.
     void collectGarbage();
 
+    // Bir GcObject'i işaretlemek ve kuyruğa eklemek için dışarıdan (markChildren'dan) çağrılır.
+    void enqueueForMarking(GcPtr obj);
+
     // Ayrılan belleği izlemek için kullanılır (isteğe bağlı)
     void notifyAllocation(size_t bytes);
     void notifyDeallocation(size_t bytes);
 };
-
-// C_CUBE_Function, C_CUBE_Object, C_CUBE_Class gibi tüm çalışma zamanı nesneleriniz
-// GcObject'ten türemeli ve markChildren metodunu implement etmelidir.
-// Örneğin:
-/*
-// function.h içinde:
-class C_CUBE_Function : public Callable, public GcObject {
-    // ...
-    void markChildren() override {
-        // Fonksiyonun gövdesindeki AST düğümlerini işaretle (eğer onlar da GcObject ise)
-        // Eğer closure bir GcObject ise, onu da işaretle
-        // Örneğin: body->markChildren(); // Eğer StmtPtr de GcObject'lere referans tutuyorsa
-         if (closure) closure->markChildren(); // Ortamlar da GcObject olabilir
-    }
-    // ...
-};
-
 
 #endif // C_CUBE_GC_H
