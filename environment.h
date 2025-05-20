@@ -3,56 +3,57 @@
 
 #include <string>
 #include <unordered_map>
-#include <memory> // std::shared_ptr
-#include <functional> // std::function için
+#include <memory> // std::shared_ptr için
+#include <stdexcept> // std::runtime_error için
 
-#include "value.h" // ValuePtr tanımı için
-#include "gc.h"    // GcObject tanımı için
+#include "token.h" // Token sınıfı için (hata raporlama ve isim almak için)
+#include "value.h" // Value sınıfı için (değişken değerleri)
+#include "error_reporter.h" // RuntimeException için (Environment hataları)
 
-// İleri bildirim: Interpreter sınıfı Environment'ı kullanabilir
-class Interpreter;
+// RuntimeException'ı bu dosyada da kullanacağımız için tanımlaması olmalı.
+// error_reporter.h'den zaten geliyor, bu yüzden sadece include etmek yeterli.
 
-// Environment: Değişkenleri ve onların değerlerini tutan bir ortam
-class Environment : public GcObject { // Environment'ı GcObject'ten türetiyoruz!
+class Environment : public std::enable_shared_from_this<Environment> {
+private:
+    // Bu ortamın kapsadığı üst ortam. Global ortamın parent'ı nullptr'dır.
+    std::shared_ptr<Environment> enclosing;
+    // Değişken isimlerini değerlere eşleştiren harita
+    std::unordered_map<std::string, Value> values;
+
 public:
-    // Bu ortamın üst ortamı. Kapanışları (closures) ve kapsam zincirini yönetir.
-    // Bu shared_ptr olduğu için GcObject'ten türemişse GC tarafından izlenir.
-    EnvironmentPtr enclosing; // EnvironmentPtr = std::shared_ptr<Environment> olmalıydı.
-                              // EnvironmentPtr'ı aşağıda Value.h'den sonra tanımlayalım
-                              // Ya da direkt shared_ptr<Environment> kullanalım şimdilik.
-    std::shared_ptr<Environment> _enclosing; // Geçici olarak GcObject olarak tanımlanana kadar
+    // Global ortam için constructor (parent'ı yok)
+    Environment();
+    // İç içe geçmiş ortamlar için constructor (bir parent'ı var)
+    Environment(std::shared_ptr<Environment> enclosing);
 
-    // Değişkenlerin adlarını ve değerlerini tutan harita
-    std::unordered_map<std::string, ValuePtr> values;
+    // Yeni bir değişken tanımlar
+    void define(const std::string& name, Value value);
 
-    // Constructor: Üst ortamı alır. Global ortam için nullptr olabilir.
-    Environment(std::shared_ptr<Environment> _enclosing = nullptr);
+    // Mevcut bir değişkene değer atar
+    // Atama işlemi, değişkeni mevcut ortamdan başlayarak üst ortamlarda arar.
+    void assign(const Token& name, Value value);
 
-    // Bir değişken tanımlar veya günceller.
-    void define(const std::string& name, ValuePtr value);
+    // Bir değişkenin değerini döndürür
+    // Değişkeni mevcut ortamdan başlayarak üst ortamlarda arar.
+    Value get(const Token& name);
 
-    // Bir değişkenin değerini alır. Bulamazsa hata fırlatır.
-    ValuePtr get(const Token& name);
+    // Belirli bir uzaklıktaki ortamda değişkenin değerini döndürür
+    // (Resolver entegre edildiğinde kullanılır)
+    Value getAt(int distance, const std::string& name);
 
-    // Bir değişkenin değerini atar. Bulamazsa hata fırlatır.
-    void assign(const Token& name, ValuePtr value);
+    // Belirli bir uzaklıktaki ortamda değişkene değer atar
+    // (Resolver entegre edildiğinde kullanılır)
+    void assignAt(int distance, const Token& name, Value value);
 
-    // GcObject arayüzü: Bu ortamın çocuklarını işaretle.
-    void markChildren(GarbageCollector& gc) override;
+    // Bir ortamın belirtilen değişkeni içerip içermediğini kontrol eder.
+    bool contains(const std::string& name) const;
 
-    // Ortamdaki her değeri bir lambda ile işlemek için yardımcı metot.
-    // Çöp toplayıcı tarafından kökleri taramak için kullanılır.
-    void forEachValue(std::function<void(ValuePtr)> callback) const;
+    // Ortamın üst ortamını döndürür (eğer varsa)
+    std::shared_ptr<Environment> getEnclosing() const;
+
+private:
+    // Belirtilen uzaklıktaki ortamı bulmaya yardımcı metod
+    std::shared_ptr<Environment> ancestor(int distance);
 };
-
-// Ortam pointer'ı için alias (kendi kendisine referans vermemek için)
-// Eğer Environment kendi başına bir GcObject ise, bu EnvironmentPtr da GcObject olabilir.
-// Ancak döngüsel bağımlılıktan kaçınmak için şimdilik ayrı bir alias kullanmak daha güvenli.
-// Yorumlayıcıda GcPtr yerine direkt std::shared_ptr<Environment> kullanmak daha doğru olur.
-// O yüzden yukarıdaki GcObject için de _enclosing kullandık.
-// Ortamların kendisi GcObject olduğundan, bu shared_ptr'lar da GC tarafından izlenir.
-// Eğer EnvironmentPtr olarak tanımlayacaksak:
- using EnvironmentPtr = std::shared_ptr<Environment>;
-// (Value.h'deki ModulePtr tanımına benzer şekilde.)
 
 #endif // C_CUBE_ENVIRONMENT_H
