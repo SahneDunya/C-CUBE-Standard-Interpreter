@@ -496,3 +496,39 @@ void runtimeError(const Token& token, const std::string& message) {
     std::cerr << "[Line " << token.line << "] Runtime Error: " << message << std::endl;
     hadRuntimeError = true;
 }
+Interpreter::Interpreter(ErrorReporter& errorReporter, const std::vector<std::string>& moduleSearchPaths)
+    : errorReporter(errorReporter), // varsayalım ki errorReporter üyesi var
+      globals(std::make_shared<Environment>()), // global ortam
+      environment(globals), // başlangıçta mevcut ortam global'e eşit
+      moduleLoader(*this, moduleSearchPaths) // ModuleLoader'ı başlat
+{
+    // Built-in fonksiyonları burada veya ayrı bir fonksiyonda tanımla
+    // builtins.registerBuiltins(globals); // Eğer böyle bir metodunuz varsa
+}
+void Interpreter::visitImportStmt(const ImportStmt& stmt) {
+    // Modül adını çözümle (örn. "game.utils" -> "game/utils")
+    std::string modulePath = stmt.moduleName.lexeme; // Token'dan al
+
+    ModulePtr importedModule = moduleLoader.loadModule(modulePath);
+
+    if (!importedModule) {
+        // Hata zaten ModuleLoader tarafından raporlanmış olmalı
+        throw RuntimeException(stmt.moduleName, "Failed to import module '" + modulePath + "'.");
+    }
+
+    // C-CUBE'da modülün nasıl temsil edileceğine karar verin:
+    // 1. Modülün global ortamını mı döndürüyor?
+    // 2. Modülü temsil eden özel bir C_CUBE_Module nesnesi mi döndürüyor?
+
+    // Eğer ModuleLoader'ın `readModule` metodu doğrudan bir `ValuePtr` (C_CUBE_Module objesi) döndürseydi,
+    // bu daha temiz olurdu. Şimdilik varsayalım ki `ModulePtr` bir `C_CUBE_Module` objesidir.
+    // Ve bu objenin "export" ettiği değerlere bir şekilde erişilebilir.
+
+    // Modülü yerel ortamda veya global ortamda bir değişkene atayın
+    // Örn: `import foo` -> `foo` değişkenine modül objesini ata
+    // `import foo as bar` -> `bar` değişkenine modül objesini ata
+    std::string alias = stmt.alias.has_value() ? stmt.alias.value().lexeme : stmt.moduleName.lexeme;
+    environment->define(alias, std::make_shared<Value>(importedModule)); // importedModule'ın kendisi bir ValuePtr olmalı
+                                                                          // veya bir C_CUBE_Module'ı Value'ye sar.
+                                                                          // Burada `Value` içine `ModulePtr`'ı sarmalamak mantıklı.
+}
