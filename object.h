@@ -6,6 +6,7 @@
 #include <unordered_map> // Alanları saklamak için map
 #include <string>
 #include <memory> // std::shared_ptr için
+#include "gc.h"
 
 // İleri bildirim: Object sınıfı Class sınıfını referans alacak.
 // Dairesel bağımlılığı önlemek için Class sınıfının tam tanımına şimdilik ihtiyacımız yok.
@@ -16,9 +17,11 @@ using C_CUBE_ClassPtr = std::shared_ptr<C_CUBE_Class>;
 
 
 // Kullanıcı tanımlı C-CUBE sınıfının bir örneğini (instance) temsil eden sınıf
-class C_CUBE_Object : public std::enable_shared_from_this<C_CUBE_Object> {
-    // std::enable_shared_from_this, bir metot çağrıldığında 'this'
-    // objesine shared_ptr oluşturmak için kullanılır (metot binding'i için gereklidir).
+class C_CUBE_Object : public GcObject {
+    // ...
+    void markChildren(GarbageCollector& gc) override { /* ... */ }
+};
+
 private:
     // Bu nesnenin ait olduğu sınıfın referansı
     C_CUBE_ClassPtr klass;
