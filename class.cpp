@@ -94,3 +94,11 @@ ValuePtr C_CUBE_Class::call(Interpreter& interpreter, const std::vector<ValuePtr
 
 // String temsilini döndürür
  const std::string& C_CUBE_Class::getName() const { return name; } // Getter metodu (isteğe bağlı)
+
+size_t CCubeClass::getSize() const {
+    // Sınıfın kendi boyutu + name string boyutu + metotların harita boyutu
+    size_t total_size = sizeof(CCubeClass) + name.capacity(); // name.length() + null terminator
+    // Metotların kendileri ayrı ObjPtr'lar olarak yönetildiğinden burada sadece pointer maliyetini hesaplayın.
+    total_size += methods.size() * (sizeof(std::string) + sizeof(std::shared_ptr<CCubeFunction>)); // Rough estimation
+    return total_size;
+}
