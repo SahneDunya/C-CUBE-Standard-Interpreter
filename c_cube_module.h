@@ -1,36 +1,65 @@
-#ifndef C_CUBE_C_CUBE_MODULE_H
-#define C_CUBE_C_CUBE_MODULE_H
+// c_cube_module.h
+#ifndef C_CUBE_MODULE_H
+#define C_CUBE_MODULE_H
 
-#include "environment.h" // EnvironmentPtr için
-#include "value.h"       // ValuePtr için
-#include "token.h"       // Token için (hata raporlama)
-
+#include "gc.h"        // GcObject'ten türemek için
+#include "environment.h" // Ortam bilgisi için
+#include "ast.h"         // C-CUBE AST'si için (yalnızca .cube)
 #include <string>
-#include <memory>
+#include <vector>
+#include <variant>       // Farklı modül içeriği için
 
-// C-CUBE modülünü temsil eden runtime değeri
-class C_CUBE_Module {
-private:
-    // Modülün üst seviye ortamı (global değişkenleri, fonksiyonları vb. içerir)
-    EnvironmentPtr environment;
-    std::string name; // Modülün adı
-
+// Python modülü için bir placeholder sınıfı
+// Gerçek implementasyon PyObject* tutmalı ve Python C API ile etkileşmeli
+class PythonModuleHandle {
 public:
-    // Constructor
-    C_CUBE_Module(std::string name, EnvironmentPtr environment)
-        : name(std::move(name)), environment(environment) {}
-
-    // Modülün bir üyesine (değişken, fonksiyon vb.) erişim.
-    // Modülün ortamında arama yapar.
-    // name: Erişilmek istenen üyenin adı (Token).
-    ValuePtr get(const Token& name);
-
-    // Modülün string temsilini döndürür.
-    std::string toString() const {
-        return "<module '" + name + "'>";
-    }
+    std::string filePath;
+    // PyObject* pyModule; // Gerçek Python modül objesi
+    PythonModuleHandle(const std::string& path) : filePath(path) {}
+    std::string toString() const { return "<Python module: " + filePath + ">"; }
 };
 
-using C_CUBE_ModulePtr = std::shared_ptr<C_CUBE_Module>;
+// Native (C/C++/Shader) modülü için bir placeholder sınıfı
+// Gerçek implementasyon FFI veya GPU API etkileşimi için gerekli verileri tutmalı
+class NativeModuleHandle {
+public:
+    std::string filePath;
+    // void* native_handle; // Derlenmiş kütüphane veya shader programı handle'ı
+    NativeModuleHandle(const std::string& path) : filePath(path) {}
+    std::string toString() const { return "<Native module: " + filePath + ">"; }
+};
 
-#endif // C_CUBE_C_CUBE_MODULE_H
+// C_CUBE_Module, farklı dillerden yüklenen modülleri temsil eder
+class C_CUBE_Module : public GcObject {
+public:
+    std::string name; // Modülün adı (örn. "math", "game.utils")
+
+    // Modülün içeriğini tutmak için variant
+    std::variant<
+        std::monostate, // Henüz yüklenmemiş veya bilinmeyen tip
+        std::vector<StmtPtr>, // C-CUBE (.cube) modüllerinin AST'si
+        std::shared_ptr<Environment>, // C-CUBE (.cube) modüllerinin kendi ortamı (globals)
+                                     // (AST ve Environment birlikte tutulabilir)
+        PythonModuleHandle, // Python (.py) modülü
+        NativeModuleHandle  // C/C++/Shader (.h, .cuh, .glsl, vb.) modülü
+        // ... Diğer dil modülleri için buraya ekle
+    > content;
+
+    // Constructor for .cube modules
+    C_CUBE_Module(const std::string& name, std::vector<StmtPtr> ast, EnvironmentPtr env)
+        : name(name), content(std::make_pair(ast, env)) {} // pair olarak tutmak AST ve Env için uygun
+
+    // Constructor for Python modules
+    C_CUBE_Module(const std::string& name, PythonModuleHandle pyHandle)
+        : name(name), content(pyHandle) {}
+
+    // Constructor for Native modules
+    C_CUBE_Module(const std::string& name, NativeModuleHandle nativeHandle)
+        : name(name), content(nativeHandle) {}
+
+    // GcObject'ten gelen sanal metotlar
+    std::string toString() const override; // GcObject'te yoksa GcObject'e eklenir
+    void markChildren() override; // GcObject'ten türeyen çocukları işaretler
+};
+
+#endif // C_CUBE_MODULE_H
