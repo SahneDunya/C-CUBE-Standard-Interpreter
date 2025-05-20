@@ -1,79 +1,224 @@
 #include "lexer.h"
-#include <iostream>
-#include <unordered_map>
+#include <iostream> // Debugging için
+#include <algorithm> // isdigit, isalpha gibi fonksiyonlar için
+#include <stdexcept> // std::runtime_error için
 
-// Hata raporlama fonksiyonu (main.cpp'de tanımlanacak, burada prototipini ekleyelim)
-// Gerçek uygulamada bunu ayrı bir modül veya hata işleme sınıfı ile yönetmek daha iyi olabilir.
- void reportError(int line, const std::string& where, const std::string& message);
- void error(int line, const std::string& message); // Lexer hataları için
+// Statik anahtar kelime haritasının başlatılması
+const std::unordered_map<std::string, TokenType> Lexer::keywords = {
+    {"and", TokenType::AND},
+    {"class", TokenType::CLASS},
+    {"else", TokenType::ELSE},
+    {"fun", TokenType::FUN},
+    {"if", TokenType::IF},
+    {"none", TokenType::NONE},
+    {"or", TokenType::OR},
+    {"return", TokenType::RETURN},
+    {"super", TokenType::SUPER},
+    {"this", TokenType::THIS},
+    {"var", TokenType::VAR},
+    {"while", TokenType::WHILE},
+    {"true", TokenType::TRUE},
+    {"false", TokenType::FALSE},
+    {"match", TokenType::MATCH},
+    {"case", TokenType::CASE},
+    {"default", TokenType::DEFAULT},
+    {"import", TokenType::IMPORT}
+};
 
-// Anahtar kelimeleri tutan map
-std::unordered_map<std::string, TokenType> keywords;
+// Constructor
+Lexer::Lexer(const std::string& source, ErrorReporter& reporter)
+    : source(source), errorReporter(reporter) {}
 
-// Anahtar kelime map'ini başlatan fonksiyon
-void initKeywords() {
-    keywords["and"] = TokenType::AND;
-    keywords["class"] = TokenType::CLASS;
-    keywords["else"] = TokenType::ELSE;
-    keywords["false"] = TokenType::FALSE;
-    keywords["fun"] = TokenType::FUN; // Fonksiyonlar için
-    keywords["for"] = TokenType::FOR;
-    keywords["if"] = TokenType::IF;
-    keywords["none"] = TokenType::NONE; // Python'daki None gibi
-    keywords["or"] = TokenType::OR;
-    keywords["print"] = TokenType::PRINT; // Geçici, sonra kaldırılabilir veya standart kütüphanede olabilir
-    keywords["return"] = TokenType::RETURN;
-    keywords["super"] = TokenType::SUPER;
-    keywords["this"] = TokenType::THIS;
-    keywords["true"] = TokenType::TRUE;
-    keywords["var"] = TokenType::VAR; // Değişken tanımlama için
-    keywords["while"] = TokenType::WHILE;
-    keywords["match"] = TokenType::MATCH; // match ifadesi
-    keywords["import"] = TokenType::IMPORT; // import deyimi
-    // Oyun geliştirme odaklı ek anahtar kelimeler buraya eklenebilir
-     keywords["entity"] = TokenType::ENTITY;
-     keywords["component"] = TokenType::COMPONENT;
-     keywords["scene"] = TokenType::SCENE;
-     keywords["async"] = TokenType::ASYNC; // Eğer asenkron destek olacaksa
-     keywords["await"] = TokenType::AWAIT;
-     keywords["graphic"] = TokenType::GRAPHIC; // Grafik ile ilgili bir keyword olabilir
+// Kaynak kodunun sonuna ulaşıldı mı?
+bool Lexer::isAtEnd() const {
+    return current >= source.length();
 }
 
-// Lexer sınıfı implementasyonu
-
-std::vector<Token> Lexer::scanTokens() {
-    // Anahtar kelimeleri sadece bir kere başlat
-    static bool keywords_initialized = false;
-    if (!keywords_initialized) {
-        initKeywords();
-        keywords_initialized = true;
-    }
-
-    while (!isAtEnd()) {
-        // Döngünün başında bir sonraki lexeme'in başlangıcını kaydet
-        start = current;
-        scanToken();
-    }
-
-    // Dosya sonu token'ını ekle
-    tokens.emplace_back(TokenType::EOF_TOKEN, "", line);
-    return tokens;
+// Sonraki karakteri tüketir ve döndürür
+char Lexer::advance() {
+    return source[current++];
 }
 
+// Token'ı literal değeri olmadan ekler
+void Lexer::addToken(TokenType type) {
+    addToken(type, std::monostate{});
+}
+
+// Token'ı literal değeriyle ekler
+void Lexer::addToken(TokenType type, LiteralType literal) {
+    std::string text = source.substr(start, current - start);
+    tokens.emplace_back(type, text, literal, line);
+}
+
+// Sonraki karakterin beklenen karakterle eşleşip eşleşmediğini kontrol eder
+// Eğer eşleşirse, karakteri tüketir (advance) ve true döndürür.
+bool Lexer::match(char expected) {
+    if (isAtEnd()) return false;
+    if (source[current] != expected) return false;
+
+    current++;
+    return true;
+}
+
+// Mevcut karakteri tüketmeden döndürür (ileriye bak)
+char Lexer::peek() const {
+    if (isAtEnd()) return '\0'; // Null karakter ile dosya sonunu işaret et
+    return source[current];
+}
+
+// Mevcut karakterden bir sonraki karakteri tüketmeden döndürür (daha da ileriye bak)
+char Lexer::peekNext() const {
+    if (current + 1 >= source.length()) return '\0';
+    return source[current + 1];
+}
+
+// Karakter bir harf mi? (Alfabetik veya alt çizgi)
+bool Lexer::isAlpha(char c) const {
+    return (c >= 'a' && c <= 'z') ||
+           (c >= 'A' && c <= 'Z') ||
+           c == '_';
+}
+
+// Karakter bir rakam mı?
+bool Lexer::isDigit(char c) const {
+    return c >= '0' && c <= '9';
+}
+
+// Karakter harf veya rakam mı?
+bool Lexer::isAlphaNumeric(char c) const {
+    return isAlpha(c) || isDigit(c);
+}
+
+// Boşlukları ve yorumları atlar
+void Lexer::skipWhitespace() {
+    while (true) {
+        char c = peek();
+        switch (c) {
+            case ' ':
+            case '\r':
+            case '\t':
+                advance(); // Boşluk karakterlerini atla
+                break;
+            case '\n':
+                line++; // Yeni satıra geçildiğinde satır numarasını artır
+                advance();
+                break;
+            case '/':
+                if (peekNext() == '/') {
+                    // Tek satırlık yorum: Satır sonuna kadar atla
+                    while (peek() != '\n' && !isAtEnd()) {
+                        advance();
+                    }
+                } else if (peekNext() == '*') {
+                    // Çok satırlık yorum: */ görene kadar atla
+                    advance(); // Tüket '/'
+                    advance(); // Tüket '*'
+                    while (!(peek() == '*' && peekNext() == '/') && !isAtEnd()) {
+                        if (peek() == '\n') line++;
+                        advance();
+                    }
+                    if (!isAtEnd()) { // */ karakterlerini tüket
+                        advance();
+                        advance();
+                    } else {
+                        errorReporter.error(line, "Beklenmeyen dosya sonu: Çok satırlı yorum kapatılmadı.");
+                    }
+                } else {
+                    // Normal bölme operatörü, atlamıyoruz
+                    return;
+                }
+                break;
+            default:
+                return; // Boşluk veya yorum değilse çık
+        }
+    }
+}
+
+// String literal'i tarar
+void Lexer::scanString() {
+    while (peek() != '"' && !isAtEnd()) {
+        if (peek() == '\n') line++; // String içinde yeni satır
+        advance();
+    }
+
+    if (isAtEnd()) {
+        errorReporter.error(line, "Kapatılmamış string.");
+        return;
+    }
+
+    advance(); // Kapanış tırnağını (") tüket
+
+    // Tırnakları çıkararak string değerini al
+    std::string value = source.substr(start + 1, current - start - 2);
+    addToken(TokenType::STRING, value);
+}
+
+// Sayı literal'i tarar
+void Lexer::scanNumber() {
+    while (isDigit(peek())) {
+        advance();
+    }
+
+    // Ondalık kısım var mı?
+    if (peek() == '.' && isDigit(peekNext())) {
+        advance(); // Noktayı tüket
+        while (isDigit(peek())) {
+            advance();
+        }
+    }
+
+    try {
+        double value = std::stod(source.substr(start, current - start));
+        addToken(TokenType::NUMBER, value);
+    } catch (const std::out_of_range& e) {
+        errorReporter.error(line, "Çok büyük veya çok küçük sayı: " + source.substr(start, current - start));
+    } catch (const std::invalid_argument& e) {
+        errorReporter.error(line, "Geçersiz sayı formatı: " + source.substr(start, current - start));
+    }
+}
+
+// Tanımlayıcı veya anahtar kelimeyi tarar
+void Lexer::scanIdentifier() {
+    while (isAlphaNumeric(peek())) {
+        advance();
+    }
+
+    std::string text = source.substr(start, current - start);
+    TokenType type = TokenType::IDENTIFIER;
+
+    // Anahtar kelime mi diye kontrol et
+    auto it = keywords.find(text);
+    if (it != keywords.end()) {
+        type = it->second; // Anahtar kelime ise ilgili TokenType'ı kullan
+    }
+
+    addToken(type);
+}
+
+// Tek bir token'ı tarar
 void Lexer::scanToken() {
-    char c = advance();
-
+    char c = advance(); // Mevcut karakteri al ve ilerle
     switch (c) {
+        // Tek karakterli token'lar
         case '(': addToken(TokenType::LEFT_PAREN); break;
         case ')': addToken(TokenType::RIGHT_PAREN); break;
         case '{': addToken(TokenType::LEFT_BRACE); break;
         case '}': addToken(TokenType::RIGHT_BRACE); break;
+        case '[': addToken(TokenType::LEFT_BRACKET); break;
+        case ']': addToken(TokenType::RIGHT_BRACKET); break;
         case ',': addToken(TokenType::COMMA); break;
         case '.': addToken(TokenType::DOT); break;
         case '-': addToken(TokenType::MINUS); break;
         case '+': addToken(TokenType::PLUS); break;
         case ';': addToken(TokenType::SEMICOLON); break;
         case '*': addToken(TokenType::STAR); break;
+        case '/':
+            // Yorum mu yoksa bölme mi? skipWhitespace() zaten yorumları halletmiş olmalı.
+            // Eğer buraya gelindiyse, tek bir '/' dir.
+            addToken(TokenType::SLASH);
+            break;
+
+        // Bir veya iki karakterli token'lar
         case '!':
             addToken(match('=') ? TokenType::BANG_EQUAL : TokenType::BANG);
             break;
@@ -86,173 +231,48 @@ void Lexer::scanToken() {
         case '>':
             addToken(match('=') ? TokenType::GREATER_EQUAL : TokenType::GREATER);
             break;
-        case '/':
-            if (match('/')) {
-                // Yorum satırı: satır sonuna kadar veya dosya sonuna kadar ilerle
-                while (peek() != '\n' && !isAtEnd()) {
-                    advance();
-                }
-            } else {
-                addToken(TokenType::SLASH);
-            }
-            break;
 
-        // Whitespace karakterlerini yok say
+        // Literaller
+        case '"': scanString(); break;
+
+        // Boşluklar ve yorumlar (skipWhitespace() burada tekrar çağrılır, ancak zaten ana döngüde hallediliyor)
         case ' ':
         case '\r':
         case '\t':
-            break; // Sadece ilerle
-
-        case '\n':
-            line++; // Yeni satıra geç
+            // Bu karakterler, scanToken çağrılmadan önce skipWhitespace tarafından atlanmalıdır.
+            // Eğer buraya ulaşıldıysa, muhtemelen bir hata vardır veya beklenmeyen bir durumdur.
+            // Bu switch bloğuna girmeden önce skipWhitespace çağrıldığı için bu case'ler gereksizdir.
+            // Ancak, güvenli olmak adına burada bırakılabilir veya kaldırılabilir.
             break;
-
-        // String literalleri
-        case '"': string(); break;
+        case '\n':
+            // Yeni satırlar da skipWhitespace tarafından halledilir.
+            line++;
+            break;
 
         default:
             if (isDigit(c)) {
-                number(); // Sayı literalini işle
+                scanNumber();
             } else if (isAlpha(c)) {
-                identifier(); // Tanımlayıcı veya anahtar kelimeyi işle
-            }
-            else {
-                // Tanınmayan karakter hatası
-                 error(line, "Unexpected character.");
-                // Geçici olarak konsola yazdıralım:
-                 std::cerr << "[Line " << line << "] Error: Unexpected character '" << c << "'." << std::endl;
+                scanIdentifier();
+            } else {
+                errorReporter.error(line, "Beklenmeyen karakter: '" + std::string(1, c) + "'");
             }
             break;
     }
 }
 
-// Yardımcı Metodlar Implementasyonu
+// Kaynak kodu tarar ve token'ların listesini döndürür
+std::vector<Token> Lexer::scanTokens() {
+    while (!isAtEnd()) {
+        start = current; // Her yeni token'ın başlangıcını ayarla
 
-bool Lexer::isAtEnd() {
-    return current >= source.length();
-}
+        skipWhitespace(); // Her token'dan önce boşlukları ve yorumları atla
+        if (isAtEnd()) break; // Boşlukları atlarken dosya sonuna ulaşılmış olabilir
 
-char Lexer::advance() {
-    current++;
-    return source[current - 1];
-}
-
-void Lexer::addToken(TokenType type) {
-    std::string text = source.substr(start, current - start);
-    tokens.emplace_back(type, text, line);
-}
-
-// String veya sayı gibi literal değeri olan tokenlar için,
-// lexeme zaten addToken metodunda alınıyor. Eğer isterseniz,
-// sayıları burada parse edip literal olarak saklayabilirsiniz,
-// ancak bunu Parser'da yapmak da mümkündür. Basitlik için lexeme stringini saklıyoruz.
-
-// char beklenen karakter mi? Eğer evet ise karakteri tüket ve true döndür.
-bool Lexer::match(char expected) {
-    if (isAtEnd()) return false;
-    if (source[current] != expected) return false;
-
-    current++;
-    return true;
-}
-
-// Şu anki karaktere bak (tüketme)
-char Lexer::peek() {
-    if (isAtEnd()) return '\0'; // Dosya sonu için null karakter döndür
-    return source[current];
-}
-
-// Bir sonraki karaktere bak (tüketme)
-char Lexer::peekNext() {
-     if (current + 1 >= source.length()) return '\0';
-     return source[current + 1];
-}
-
-
-void Lexer::string() {
-    while (peek() != '"' && !isAtEnd()) {
-        if (peek() == '\n') line++; // String içinde yeni satır desteği
-        advance();
+        scanToken(); // Bir token'ı tara
     }
 
-    if (isAtEnd()) {
-         error(line, "Unterminated string.");
-        std::cerr << "[Line " << line << "] Error: Unterminated string." << std::endl;
-        return;
-    }
-
-    // Kapanış tırnağını tüket
-    advance();
-
-    // Tırnaklar arasındaki değeri (lexeme) al
-    // start + 1 ile ilk tırnağı atla
-    // current - start - 2 ile tırnakların uzunluğunu çıkar
-    std::string value = source.substr(start + 1, current - start - 2);
-     addToken(TokenType::STRING, value); // Literal değeri ekleyebilirsiniz, şimdilik lexeme yeterli
-    tokens.emplace_back(TokenType::STRING, value, line);
-}
-
-void Lexer::number() {
-    // Tam sayı kısmını oku
-    while (isDigit(peek())) {
-        advance();
-    }
-
-    // Ondalıklı kısım var mı? (örn: 123.45)
-    if (peek() == '.' && isDigit(peekNext())) {
-        // '.' karakterini tüket
-        advance();
-        // Ondalıklı kısmı oku
-        while (isDigit(peek())) {
-            advance();
-        }
-    }
-
-    // Lexeme'yi al ve NUMBER token'ı olarak ekle
-    std::string value = source.substr(start, current - start);
-     addToken(TokenType::NUMBER, std::stod(value)); // String'i double'a çevirip literal olarak saklayabilirsiniz
-    tokens.emplace_back(TokenType::NUMBER, value, line);
-}
-
-void Lexer::identifier() {
-    while (isAlphaNumeric(peek())) {
-        advance();
-    }
-
-    // Lexeme'yi al (tanımlayıcı veya anahtar kelime olabilir)
-    std::string text = source.substr(start, current - start);
-
-    // Anahtar kelime map'inde ara
-    auto it = keywords.find(text);
-    TokenType type = TokenType::IDENTIFIER; // Varsayılan olarak tanımlayıcı
-
-    if (it != keywords.end()) {
-        // Anahtar kelime bulundu
-        type = it->second;
-    }
-
-    addToken(type); // Token'ı ekle (lexeme zaten metin içinde)
-}
-
-bool Lexer::isAlpha(char c) {
-    return (c >= 'a' && c <= 'z') ||
-           (c >= 'A' && c <= 'Z') ||
-            c == '_'; // Python'da _ karakteri de geçerli
-}
-
-bool Lexer::isDigit(char c) {
-    return c >= '0' && c <= '9';
-}
-
-bool Lexer::isAlphaNumeric(char c) {
-    return isAlpha(c) || isDigit(c);
-}
-
-// Hata Yönetimi (Basit Konsol Çıktısı)
-// Daha gelişmiş bir sistem için main.cpp'de tanımlanan veya ayrı bir sınıf/fonksiyon kullanılmalıdır.
-
-void Lexer::error(int line, const std::string& message) {
-    // hadError flag'ini set et
-    // Gerçek hata raporlama fonksiyonunu çağır (reportError)
-    std::cerr << "[Line " << line << "] Error: " << message << std::endl;
+    // Dosya sonu token'ını ekle
+    tokens.emplace_back(TokenType::EOF_TOKEN, "", std::monostate{}, line);
+    return tokens;
 }
