@@ -2,70 +2,142 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <sstream> // std::stringstream için
 
+// Proje bağımlılıkları (gerekli başlık dosyaları)
 #include "lexer.h"
 #include "parser.h"
 #include "interpreter.h"
 #include "error_reporter.h"
-// Diğer include'lar
+#include "environment.h" // Ortam sınıfları
+#include "gc.h"          // Çöp toplayıcı
+#include "value.h"       // Değer tipleri
+#include "c_cube_module.h" // Modül tipi
+#include "module_loader.h" // Modül yükleyici
+#include "utils.h"         // Yardımcı fonksiyonlar (örn. valueToString)
 
-// Kaynak kodu dosyadan okuma fonksiyonu
- std::string readFile(const std::string& path);
+// Hata raporlayıcıyı global olarak tanımlayalım, tüm bileşenler erişebilsin
+ErrorReporter globalErrorReporter;
 
-// Programı çalıştırma (dosya veya interaktif)
- void run(const std::string& source);
+// Yorumlayıcıyı global olarak tanımlayalım (veya main içinde heap'te)
+ Interpreter interpreter(globalErrorReporter, {}); // Constructor bağımlılıkları nedeniyle burada direkt başlatamayız
 
-// Hata olduğunu belirten flag
- bool hadError = false;
- bool hadRuntimeError = false;
-
-// Hata raporlama fonksiyonları
- void report(int line, const std::string& where, const std::string& message);
- void error(int line, const std::string& message);
- void runtimeError(const RuntimeError& error); // Interpreter'dan gelen hatalar için
-
-int main(int argc, char* argv[]) {
-  ErrorReporter errorReporter;
-    std::vector<std::string> moduleSearchPaths;
-    moduleSearchPaths.push_back("."); // Mevcut dizin
-    moduleSearchPaths.push_back("./modules");
-    if (argc > 2) {
-        std::cerr << "Usage: ccube [script]" << std::endl;
-        return 1;
-    } else if (argc == 2) {
-        // Dosyadan çalıştır
-         runFile(argv[1]);
-    } else {
-         İnteraktif mod (REPL)
-         runPrompt();
+// Dosya çalıştırma fonksiyonu
+void runFile(const std::string& path, Interpreter& interpreter) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        std::cerr << "Hata: Dosya açılamadı '" << path << "'" << std::endl;
+        exit(1);
     }
 
-    // hadError veya hadRuntimeError durumuna göre çıkış kodu döndürme
-     return hadError ? 65 : (hadRuntimeError ? 70 : 0);
- Interpreter interpreter(errorReporter, moduleSearchPaths);
-    // ... yorumlayıcıyı kullan
-     return 0; // Şimdilik basit bir dönüş
-}
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string source = buffer.str();
 
-// run fonksiyonunun basit bir taslağı
-
-void run(const std::string& source) {
-    Lexer lexer(source);
+    // Lexer
+    Lexer lexer(source, globalErrorReporter);
     std::vector<Token> tokens = lexer.scanTokens();
 
-    // Tokenları yazdırma (hata ayıklama için)
-     for (const auto& token : tokens) {
-         std::cout << token.toString() << std::endl;
-     }
+    if (globalErrorReporter.hasError()) {
+        std::cerr << "Tarama hatası!" << std::endl;
+        return;
+    }
 
-    if (hadError) return; // Lexer hatası varsa devam etme
-
-    Parser parser(tokens);
+    // Parser
+    Parser parser(tokens, globalErrorReporter);
     std::vector<StmtPtr> statements = parser.parse();
 
-    if (hadError) return; // Parser hatası varsa devam etme
+    if (globalErrorReporter.hasError()) {
+        std::cerr << "Çözümleme hatası!" << std::endl;
+        return;
+    }
 
-    Interpreter interpreter;
-    interpreter.interpret(statements); // Yorumlamayı başlat
+    // Interpreter
+    try {
+        interpreter.interpret(statements);
+    } catch (const RuntimeException& e) {
+        // Yorumlayıcıdan gelen çalışma zamanı hatalarını yakala
+        globalErrorReporter.runtimeError(e);
+    } catch (const std::exception& e) {
+        // Diğer genel hataları yakala
+        std::cerr << "Beklenmedik hata: " << e.what() << std::endl;
+    }
+}
 
-    // Runtime hatası kontrolü yapılabilir
+// REPL (Read-Eval-Print Loop) fonksiyonu
+void runRepl(Interpreter& interpreter) {
+    std::cout << "C-CUBE REPL v0.1" << std::endl;
+    std::cout << "Çıkmak için 'exit()' yazın veya Ctrl+C kullanın." << std::endl;
+
+    std::string line;
+    while (true) {
+        std::cout << ">>> ";
+        std::getline(std::cin, line);
+
+        if (line == "exit()") {
+            break;
+        }
+
+        // Hata raporlayıcıyı her REPL komutu için sıfırla
+        globalErrorReporter.reset();
+
+        // Lexer
+        Lexer lexer(line, globalErrorReporter);
+        std::vector<Token> tokens = lexer.scanTokens();
+
+        if (globalErrorReporter.hasError()) {
+            // Hatalar zaten raporlandığı için devam et
+            continue;
+        }
+
+        // Parser
+        Parser parser(tokens, globalErrorReporter);
+        // REPL için tek bir ifade veya bildirimden fazlasını işlemek gerekebilir.
+        // Basit REPL'ler genellikle tek bir Statement veya Expression'ı yürütür.
+        // Burada basitçe ifadeler olarak parse edelim.
+        std::vector<StmtPtr> statements = parser.parse();
+
+        if (globalErrorReporter.hasError()) {
+            continue;
+        }
+
+        // Interpreter
+        try {
+            // Her bir statement'ı ayrı ayrı yorumla
+            interpreter.interpret(statements);
+            // REPL'de son ifadenin değerini basmak yaygındır,
+            // ancak mevcut yorumlayıcı tasarımımız bunu doğrudan desteklemiyor.
+            // Bunun için interpreter.interpret'in bir değer döndürmesi veya
+            // ayrı bir `evaluateExpression` metodunun olması gerekir.
+            // Şimdilik sadece statement'ları yürütüyoruz.
+        } catch (const RuntimeException& e) {
+            globalErrorReporter.runtimeError(e);
+        } catch (const std::exception& e) {
+            std::cerr << "Beklenmedik hata: " << e.what() << std::endl;
+        }
+    }
+}
+
+int main(int argc, char* argv[]) {
+    // Modül arama yollarını belirle
+    std::vector<std::string> moduleSearchPaths;
+    moduleSearchPaths.push_back(".");          // Mevcut dizin
+    moduleSearchPaths.push_back("./modules");  // Varsayılan 'modules' dizini
+
+    // Interpreter nesnesini başlat
+    Interpreter interpreter(globalErrorReporter, moduleSearchPaths);
+
+    if (argc == 1) {
+        // Argüman yoksa REPL modunu çalıştır
+        runRepl(interpreter);
+    } else if (argc == 2) {
+        // Tek argüman varsa dosyayı çalıştır
+        runFile(argv[1], interpreter);
+    } else {
+        // Geçersiz argüman sayısı
+        std::cerr << "Kullanım: " << argv[0] << " [dosya]" << std::endl;
+        exit(64); // EX_USAGE
+    }
+
+    return 0;
+}
