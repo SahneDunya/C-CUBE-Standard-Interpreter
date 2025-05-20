@@ -74,7 +74,6 @@ ValuePtr C_CUBE_Function::call(Interpreter& interpreter, const std::vector<Value
 }
 
 // Metot binding'i (Object sınıfı implement edildiğinde kullanılacak)
-/*
 C_CUBE_FunctionPtr C_CUBE_Function::bind(std::shared_ptr<C_CUBE_Object> instance) {
     // Fonksiyonun closure ortamını genişleterek yeni bir ortam oluştur
     // Bu yeni ortam, 'this' adını instance objesine bağlar.
@@ -85,4 +84,9 @@ C_CUBE_FunctionPtr C_CUBE_Function::bind(std::shared_ptr<C_CUBE_Object> instance
     // Bu kopya aynı parametreleri, gövdeyi kullanır ama bağlı closure'a sahiptir.
     // Initializer durumu da kopyalanır.
     return std::make_shared<C_CUBE_Function>(parameters, body, bound_closure, isInitializer);
+}
+size_t CCubeFunction::getSize() const {
+    // Sadece Function objesinin kendisinin ve pointerlarının boyutunu düşünün.
+    // Closure ortamının boyutu ayrı olarak GC tarafından yönetilir.
+    return sizeof(CCubeFunction); // + declaration.size() + closure.size() (rough estimation)
 }
