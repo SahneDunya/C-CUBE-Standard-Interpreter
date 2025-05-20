@@ -1,92 +1,75 @@
 #include "environment.h"
-#include "token.h" // Hata mesajları için
-#include "value.h" // ValuePtr tipini kullanıyor
-#include <iostream>
-#include <stdexcept> // std::runtime_error için
+#include "error_reporter.h" // Hata raporlama için (eğer global ise)
+#include "value.h"          // ValuePtr'ları kullanmak için
+#include "token.h"          // Hata raporlamada Token kullanmak için
+
+#include <iostream> // Debugging için
+
+// Harici bir ErrorReporter instance'ı olduğunu varsayalım
+ extern ErrorReporter globalErrorReporter;
 
 // Global skop için constructor
 Environment::Environment() : enclosing(nullptr) {}
 
 // İç içe skoplar için constructor
-Environment::Environment(std::shared_ptr<Environment> enclosing) : enclosing(enclosing) {}
+Environment::Environment(std::shared_ptr<Environment> enclosing)
+    : _enclosing(enclosing) {
+}
 
-// Değişken tanımlama
+// Bir değişken tanımlar veya günceller.
 void Environment::define(const std::string& name, ValuePtr value) {
-    // Dinamik diller genellikle yeniden tanımlamaya izin verir
-     values[name] = value;
-
-    // Eğer yeniden tanımlamaya izin vermek istemiyorsanız:
-    if (values.count(name)) {
-        // error(name, "Variable '" + name + "' already defined in this scope.");
-        // Veya bir istisna fırlatabilirsiniz
-        std::cerr << "Runtime Error: Variable '" << name << "' already defined in this scope." << std::endl;
-        // Hata durumunu işaretleyebilirsiniz
-         Interpreter::hadRuntimeError = true;
-        return; // Tanımlama başarısız oldu
-    }
     values[name] = value;
 }
 
-// Değişken değeri alma
+// Bir değişkenin değerini alır. Bulamazsa hata fırlatır.
 ValuePtr Environment::get(const Token& name) {
-    // Önce mevcut ortamda ara
     if (values.count(name.lexeme)) {
         return values.at(name.lexeme);
     }
 
-    // Mevcut ortamda yoksa, bir üst ortama sor
-    if (enclosing) {
-        return enclosing->get(name); // Rekürsif çağrı
+    // Eğer bu ortamda yoksa, üst ortamda ara (kapsam zinciri)
+    if (_enclosing) {
+        return _enclosing->get(name);
     }
 
-    // En üst ortama kadar çıktık ve hala bulamadık
-     runtimeError(name, "Undefined variable '" + name.lexeme + "'.");
-     std::cerr << "[Line " << name.line << "] Runtime Error: Undefined variable '" << name.lexeme << "'." << std::endl;
-     // Hata durumunu işaretleyebilirsiniz
-      Interpreter::hadRuntimeError = true;
-
-     // Tanımlanmamış değişken için özel bir değer döndür (örneğin None) veya istisna fırlat
-      return std::make_shared<Value>(); // std::monostate (None) içeren Value
-     // veya istisna: throw std::runtime_error("Undefined variable '" + name.lexeme + "' at line " + std::to_string(name.line));
-     // Şimdilik null pointer döndürelim, interpreter bunu kontrol etmeli
-     return nullptr;
+    // globalErrorReporter.runtimeError(name, "Undefined variable '" + name.lexeme + "'.");
+    throw std::runtime_error("Undefined variable '" + name.lexeme + "' at line " + std::to_string(name.line) + ".");
 }
 
-// Değişken değeri atama (zaten tanımlanmış olmalı)
+// Bir değişkenin değerini atar. Bulamazsa hata fırlatır.
 void Environment::assign(const Token& name, ValuePtr value) {
-    // Önce mevcut ortamda ara
     if (values.count(name.lexeme)) {
         values[name.lexeme] = value;
-        return; // Atama tamamlandı
+        return;
     }
 
-    // Mevcut ortamda yoksa, bir üst ortama sor
-    if (enclosing) {
-        enclosing->assign(name, value); // Rekürsif çağrı
-        return; // Atama tamamlandı (üst ortamda bulundu)
+    // Eğer bu ortamda yoksa, üst ortamda ata
+    if (_enclosing) {
+        _enclosing->assign(name, value);
+        return;
     }
 
-    // En üst ortama kadar çıktık ve hala bulamadık (değişken tanımlı değil)
-     runtimeError(name, "Undefined variable '" + name.lexeme + "'.");
-    std::cerr << "[Line " << name.line << "] Runtime Error: Undefined variable '" << name.lexeme << "'." << std::endl;
-    // Hata durumunu işaretleyebilirsiniz
-     Interpreter::hadRuntimeError = true;
+    // globalErrorReporter.runtimeError(name, "Undefined variable '" + name.lexeme + "'.");
+    throw std::runtime_error("Undefined variable '" + name.lexeme + "' at line " + std::to_string(name.line) + ".");
 }
 
-// Eğer Resolver aşaması eklenecekse, bu metodlar implement edilir
-
-EnvironmentPtr Environment::ancestor(int distance) {
-    std::shared_ptr<Environment> environment = shared_from_this(); // Şu anki ortam
-    for (int i = 0; i < distance; ++i) {
-        environment = environment->enclosing;
+// GcObject arayüzü: Bu ortamın çocuklarını işaretle.
+void Environment::markChildren(GarbageCollector& gc) {
+    // 1. Üst ortamı işaretle (eğer varsa ve GcObject ise)
+    if (_enclosing) {
+        gc.enqueueForMarking(_enclosing); // _enclosing, kendisi GcObject olduğundan doğrudan enqueue edilebilir
     }
-    return environment;
-}
 
-ValuePtr Environment::getAt(int distance, const std::string& name) {
-    return ancestor(distance)->values.at(name);
+    // 2. Bu ortamdaki tüm değerleri işaretle
+    for (const auto& pair : values) {
+        // Her ValuePtr'ın içinde bir GcObject olup olmadığını kontrol et
+        if (auto gcObj = pair.second->getGcObject()) {
+            gc.enqueueForMarking(gcObj); // Eğer varsa, çöp toplayıcıya bildir
+        }
+    }
 }
-
-void Environment::assignAt(int distance, const std::string& name, ValuePtr value) {
-    ancestor(distance)->values[name] = value;
+void Environment::forEachValue(std::function<void(ValuePtr)> callback) const {
+    for (const auto& pair : values) {
+        callback(pair.second);
+    }
 }
