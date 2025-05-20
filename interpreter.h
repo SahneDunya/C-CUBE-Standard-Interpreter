@@ -4,6 +4,7 @@
 #include "ast.h"
 #include "environment.h" // Değişken ortamı için
 #include "value.h" // Runtime değerleri için
+#include "module_loader.h"
 
 // Yorumlayıcı genellikle AST ziyaretçisi olarak implement edilir
  class Interpreter : public ExprVisitor, public StmtVisitor { ... };
@@ -15,7 +16,10 @@ private:
 
     // Şu anki değişken ortamı (skop yönetimi için)
     EnvironmentPtr environment = globals;
-
+    EnvironmentPtr globals; // Global ortam
+    EnvironmentPtr environment; // Mevcut yürütme ortamı
+    ModuleLoader moduleLoader; // Yeni eklenen üye
+   Interpreter(ErrorReporter& errorReporter, const std::vector<std::string>& moduleSearchPaths);
     // Yorumlama sırasında kullanılan yardımcı metodlar
      ValuePtr evaluate(ExprPtr expr);
      void execute(StmtPtr stmt);
