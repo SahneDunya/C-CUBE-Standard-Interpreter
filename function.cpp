@@ -18,10 +18,25 @@ struct ReturnException : public std::runtime_error {
 // Constructor zaten .h dosyasında tanımlandı.
 
 // Fonksiyonu çağırma metodunun implementasyonu
-ValuePtr C_CUBE_Function::call(Interpreter& interpreter, const std::vector<ValuePtr>& arguments) {
-    // 1. Çağrı için yeni bir ortam oluştur
-    // Bu ortamın üst ortamı, fonksiyonun tanımlandığı closure ortamıdır.
-    // Metotlar için ise, bu ortamın üstü, bind metodu ile oluşturulmuş instance'a bağlı ortam olurdu.
+Value CCubeFunction::call(Interpreter& interpreter, const std::vector<Value>& arguments, std::shared_ptr<CCubeInstance> this_instance) {
+    std::shared_ptr<Environment> function_environment = std::make_shared<Environment>(closure);
+    if (this_instance != nullptr) {
+        function_environment->define("this", this_instance);
+    }
+    // Parametreleri yeni ortama tanımla
+    for (size_t i = 0; i < declaration->params.size(); ++i) {
+        function_environment->define(declaration->params[i].lexeme, arguments[i]);
+    }
+    // ... (geri kalan fonksiyon gövdesini yürütme)
+    try {
+        interpreter.executeBlock(declaration->body->statements, function_environment);
+    } catch (const ReturnException& result) {
+        if (isInitializer) return this_instance; // Kurucular her zaman instance'ı döndürür
+        return result.value;
+    }
+    if (isInitializer) return this_instance; // Kurucular her zaman instance'ı döndürür
+    return std::monostate{};
+}
     EnvironmentPtr environment = std::make_shared<Environment>(closure);
 
     // Eğer bu bir metot ise, 'this' referansını yeni ortama bağla
